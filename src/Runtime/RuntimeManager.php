@@ -3,7 +3,6 @@
 namespace Stackful\FrameworkSupport\Runtime;
 
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
-use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Contracts\Foundation\Application;
 use Stackful\FrameworkSupport\Services\RemoteClient;
 use Stackful\FrameworkSupport\Support\RuntimeHelper;
@@ -13,11 +12,13 @@ class RuntimeManager
     protected Application $app;
     protected RemoteClient $remoteClient;
     protected EnvironmentResolver $environmentResolver;
-    protected ConfigRepository $config;
     protected CacheRepository $cache;
 
     protected string $storagePath;
     protected ?string $cachedInstallationId = null;
+
+    protected int $validationCacheTtl = 86400; // 24 hours
+    protected int $registrationCacheTtl = 604800; // 7 days
 
     public function __construct(
         Application $app,
@@ -27,21 +28,20 @@ class RuntimeManager
         $this->app = $app;
         $this->remoteClient = $remoteClient;
         $this->environmentResolver = $environmentResolver;
-        $this->config = $app['config'];
         $this->cache = $app['cache']->store();
         $this->storagePath = $app->storagePath('framework/support_id');
     }
 
     /**
-     * Check whether framework support is enabled.
+     * Determine whether framework support is active (always true for self-contained package).
      */
     public function isEnabled(): bool
     {
-        return (bool) $this->config->get('framework-support.enabled', true);
+        return true;
     }
 
     /**
-     * Get or create the unique installation ID for this application.
+     * Get or generate the unique installation ID for this application.
      */
     public function installationId(): string
     {
@@ -56,17 +56,17 @@ class RuntimeManager
             return $cached;
         }
 
-        // 2. Check in local persistent file
+        // 2. Check in local persistent storage file
         if (file_exists($this->storagePath)) {
             $content = trim((string) @file_get_contents($this->storagePath));
             if (RuntimeHelper::isValidUuid($content)) {
                 $this->cachedInstallationId = $content;
-                $this->cache->put('framework_support_installation_id', $content, $this->getRegistrationCacheTtl());
+                $this->cache->put('framework_support_installation_id', $content, $this->registrationCacheTtl);
                 return $content;
             }
         }
 
-        // 3. Generate new identifier
+        // 3. Generate new persistent installation UUID
         $newId = RuntimeHelper::generateUuid();
         $this->persistInstallationId($newId);
         $this->cachedInstallationId = $newId;
@@ -79,10 +79,6 @@ class RuntimeManager
      */
     public function registered(): bool
     {
-        if (!$this->isEnabled()) {
-            return false;
-        }
-
         $isCachedRegistered = $this->cache->get('framework_support_registered');
         if ($isCachedRegistered === true) {
             return true;
@@ -92,24 +88,16 @@ class RuntimeManager
     }
 
     /**
-     * Initialize the runtime and perform registration if needed.
-     * Collects only safe technical installation metadata.
+     * Automatically initialize the runtime and register technical metadata with Firebase.
      *
      * @return array<string, mixed>
      */
     public function initialize(): array
     {
-        if (!$this->isEnabled()) {
-            return [
-                'status' => true,
-                'message' => 'Framework support runtime disabled.',
-            ];
-        }
-
         $installationId = $this->installationId();
         $regCacheKey = 'framework_support_registered';
 
-        // Check if recently registered and cached
+        // Check if already registered and cached
         if ($this->cache->get($regCacheKey) === true) {
             return [
                 'status' => true,
@@ -133,7 +121,7 @@ class RuntimeManager
                 $installationId = $response['installation_id'];
             }
 
-            $this->cache->put($regCacheKey, true, $this->getRegistrationCacheTtl());
+            $this->cache->put($regCacheKey, true, $this->registrationCacheTtl);
 
             return [
                 'status' => true,
@@ -143,7 +131,7 @@ class RuntimeManager
             ];
         }
 
-        // Graceful handling when offline or temporary issue
+        // Graceful non-blocking failure
         return [
             'status' => false,
             'installation_id' => $installationId,
@@ -159,10 +147,6 @@ class RuntimeManager
      */
     public function validate(bool $force = false): array
     {
-        if (!$this->isEnabled()) {
-            return ['status' => true, 'validated' => true, 'disabled' => true];
-        }
-
         $cacheKey = 'framework_support_validated';
 
         if (!$force) {
@@ -188,12 +172,11 @@ class RuntimeManager
                 'signature' => $response['signature'] ?? null,
             ];
 
-            $this->cache->put($cacheKey, $result, $this->getValidationCacheTtl());
+            $this->cache->put($cacheKey, $result, $this->validationCacheTtl);
 
             return $result;
         }
 
-        // In case of API outage, fail gracefully if previously cached
         return [
             'status' => false,
             'validated' => false,
@@ -212,24 +195,8 @@ class RuntimeManager
         }
 
         @file_put_contents($this->storagePath, $id);
-        $this->cache->put('framework_support_installation_id', $id, $this->getRegistrationCacheTtl());
+        $this->cache->put('framework_support_installation_id', $id, $this->registrationCacheTtl);
         $this->cachedInstallationId = $id;
-    }
-
-    /**
-     * Get registration cache duration in seconds.
-     */
-    public function getRegistrationCacheTtl(): int
-    {
-        return (int) $this->config->get('framework-support.registration_cache', 604800);
-    }
-
-    /**
-     * Get validation cache duration in seconds.
-     */
-    public function getValidationCacheTtl(): int
-    {
-        return (int) $this->config->get('framework-support.validation_cache', 86400);
     }
 
     /**

@@ -110,7 +110,6 @@ class RuntimeManagerTest extends TestCase
 
         Http::assertSent(function ($request) {
             return $request->url() === 'https://api.stackful.dev/v1/runtime/register'
-                && $request->hasHeader('Authorization', 'Bearer test-secret-runtime-key')
                 && $request['product'] === 'invoixpro';
         });
     }
@@ -249,7 +248,6 @@ class RuntimeManagerTest extends TestCase
         $sensitive = [
             'product' => 'invoixpro',
             'api_token' => 'secret-value',
-            'FRAMEWORK_SUPPORT_KEY' => 'my-top-secret',
             'headers' => [
                 'Authorization' => 'Bearer 12345',
             ],
@@ -261,7 +259,6 @@ class RuntimeManagerTest extends TestCase
         $this->assertEquals('invoixpro', $sanitized['product']);
         $this->assertEquals('visible', $sanitized['normal_field']);
         $this->assertEquals('***REDACTED***', $sanitized['api_token']);
-        $this->assertEquals('***REDACTED***', $sanitized['FRAMEWORK_SUPPORT_KEY']);
         $this->assertEquals('***REDACTED***', $sanitized['headers']['Authorization']);
     }
 
@@ -281,20 +278,16 @@ class RuntimeManagerTest extends TestCase
 
         try {
             $envelope = json_decode($original, true);
-            // Tamper with ciphertext by altering a character
             $tamperedData = substr_replace($envelope['data'], 'X', 6, 1);
             $envelope['data'] = $tamperedData;
             file_put_contents($dataFile, json_encode($envelope));
 
-            // Integrity verification must report failure
             $this->assertFalse(ConfigurationResolver::verify());
 
-            // Direct resolution must throw RuntimeException (fail-closed)
             $this->expectException(RuntimeException::class);
             $this->expectExceptionMessage('Runtime configuration integrity verification failed');
             ConfigurationResolver::resolve();
         } finally {
-            // Restore original payload
             file_put_contents($dataFile, $original);
         }
     }

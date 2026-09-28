@@ -5,213 +5,45 @@
 [![Laravel Compatibility](https://img.shields.io/badge/Laravel-10.x%20%7C%2011.x%20%7C%2012.x-red.svg)](https://laravel.com)
 [![License: Proprietary](https://img.shields.io/badge/License-Proprietary-black.svg)](LICENSE)
 
-Production-ready private infrastructure and runtime support package for Stackful Laravel products, including InvoixPro and future suite applications.
+Self-contained private infrastructure and runtime support package for Stackful Laravel products, including InvoixPro.
 
 ---
 
-## Table of Contents
-1. [Overview](#overview)
-2. [Key Architecture Principles](#key-architecture-principles)
-3. [Compatibility](#compatibility)
-4. [Installation](#installation)
-5. [Configuration](#configuration)
-6. [Environment Variables](#environment-variables)
-7. [Developer Usage](#developer-usage)
-8. [Validation & Caching Workflow](#validation--caching-workflow)
-9. [Server-Side Architecture (Zero-Credential Client)](#server-side-architecture-zero-credential-client)
-10. [Local Development](#local-development)
-11. [Running Tests](#running-tests)
-12. [Release & Versioning](#release--versioning)
+## Zero-Configuration Installation
 
----
+This package is completely self-contained. The consuming Laravel application requires **zero configuration**, **no `.env` variables**, and **no published config files**.
 
-## Overview
-
-`stackful/framework-support` provides a clean, neutral framework support foundation across Stackful applications. It eliminates brittle application-level middleware and ad-hoc diagnostics by providing standardized runtime management, environment resolution, and secure client-to-API communication.
-
----
-
-## Key Architecture Principles
-
-- **Neutral Naming**: Uses standard framework and runtime service semantics (`RuntimeManager`, `ApplicationService`, `RemoteClient`).
-- **Zero Client Credentials**: No Firebase private keys, service accounts, or database passwords are ever bundled or transferred. All infrastructure operations are managed server-side at `api.stackful.dev`.
-- **Intelligent Caching**: Avoids calling external endpoints on every request. Validations and registrations are cached locally using multi-tier storage with configurable TTLs.
-- **Fail-Safe & Non-Destructive**: Gracefully handles network timeouts and remote outages without crashing user applications.
-- **Strict Privacy**: Collects only standard environment telemetry (domain, Laravel version, PHP version) required for runtime service operation.
-
----
-
-## Compatibility
-
-- **PHP**: `^8.2` (PHP 8.2, 8.3, 8.4)
-- **Laravel**: `10.x`, `11.x`, `12.x`
-
----
-
-## Installation
-
-### 1. Require the Package
+### Installation
 
 ```bash
 composer require stackful/framework-support
 ```
 
-The package supports **Laravel Auto-Discovery**. The `FrameworkSupportServiceProvider` is automatically registered.
+That's it! 
 
-### 2. Publish Configuration (Optional)
+The package leverages Laravel Package Auto-Discovery. Upon installation, it automatically:
+1. Registers the package runtime in the Laravel service container.
+2. Identifies the host application context, domain, and environment automatically.
+3. Initializes the cloud synchronization client in memory with AES-256-GCM authenticated encryption.
+4. Performs registration and cached heartbeat checks silently in the background without affecting application performance.
+
+---
+
+## Features
+
+- **Zero Consumer-Side Setup**: No `.env` keys, no published configuration files, no manual service provider registration.
+- **Automatic Environment Discovery**: Automatically detects domain, application URL, Laravel version, PHP runtime, OS, and hostname.
+- **Fail-Safe & Non-Blocking**: Network drops or temporary cloud issues fail gracefully without disrupting host application requests or throwing unhandled errors.
+- **Encrypted In-Memory Secrets**: Encrypted with AES-256-GCM. No plaintext service accounts or private keys are ever stored on disk or exposed to the consuming application.
+
+---
+
+## Local Development Setup (Package Maintainers Only)
+
+To configure or update the internal encrypted cloud payload locally before release:
 
 ```bash
-php artisan vendor:publish --tag=framework-support-config
-```
-
----
-
-## Configuration
-
-The published configuration file resides in `config/framework-support.php`:
-
-```php
-return [
-    'enabled' => env('FRAMEWORK_SUPPORT_ENABLED', true),
-
-    'endpoint' => env(
-        'FRAMEWORK_SUPPORT_ENDPOINT',
-        'https://api.stackful.dev'
-    ),
-
-    'product' => env(
-        'FRAMEWORK_SUPPORT_PRODUCT'
-    ),
-
-    'key' => env(
-        'FRAMEWORK_SUPPORT_KEY'
-    ),
-
-    'timeout' => (int) env('FRAMEWORK_SUPPORT_TIMEOUT', 10),
-
-    'validation_cache' => (int) env('FRAMEWORK_SUPPORT_VALIDATION_CACHE', 86400),
-
-    'registration_cache' => (int) env('FRAMEWORK_SUPPORT_REGISTRATION_CACHE', 604800),
-];
-```
-
----
-
-## Environment Variables
-
-Add these variables to your product's `.env` file:
-
-```dotenv
-FRAMEWORK_SUPPORT_ENABLED=true
-FRAMEWORK_SUPPORT_ENDPOINT=https://api.stackful.dev
-FRAMEWORK_SUPPORT_PRODUCT=invoixpro
-FRAMEWORK_SUPPORT_KEY=your_product_runtime_key_here
-FRAMEWORK_SUPPORT_TIMEOUT=10
-```
-
----
-
-## Developer Usage
-
-### Using `RuntimeManager`
-
-```php
-use Stackful\FrameworkSupport\Runtime\RuntimeManager;
-
-$runtime = app(RuntimeManager::class);
-
-// Initialize installation identifier & register if needed
-$status = $runtime->initialize();
-
-// Check if registered
-if ($runtime->registered()) {
-    // Validate runtime state (uses cached validation result by default)
-    $validation = $runtime->validate();
-}
-
-// Retrieve unique installation identifier
-$uuid = $runtime->installationId();
-```
-
-### Using `ApplicationService`
-
-```php
-use Stackful\FrameworkSupport\Services\ApplicationService;
-
-$appService = app(ApplicationService::class);
-
-// Check if operational
-if ($appService->isReady()) {
-    // Execute authorized runtime operation
-    $response = $appService->executeRuntimeOperation('fetch_manifest', [
-        'region' => 'us-east-1',
-    ]);
-}
-```
-
----
-
-## Validation & Caching Workflow
-
-```
-Application Request
-       │
-       ▼
-Is Validation Cached?
- ├── YES ──► Return Cached Result (Zero HTTP Calls)
- └── NO  ──► POST https://api.stackful.dev/v1/runtime/validate
-                  │
-                  ▼
-             Cache Response (TTL: 86,400s / 24h)
-```
-
----
-
-## Server-Side Architecture (Zero-Credential Client)
-
-```
-┌───────────────────────────────┐
-│ Customer Laravel Application  │
-│ (InvoixPro / Stackful App)    │
-└───────────────┬───────────────┘
-                │
-                │ HTTPS (Signed API Key)
-                ▼
-┌───────────────────────────────┐
-│       api.stackful.dev        │
-│  - Verifies Product & Domain  │
-│  - Authorizes Installation    │
-└───────────────┬───────────────┘
-                │
-                │ Server-Side Only
-                ▼
-┌───────────────────────────────┐
-│  Firebase / Cloud Services    │
-│  (Service Account Kept Here)  │
-└───────────────────────────────┘
-```
-
----
-
-## Local Development
-
-To link and test locally in a Laravel application:
-
-In your Laravel `composer.json`:
-
-```json
-"repositories": [
-    {
-        "type": "path",
-        "url": "../framework-support"
-    }
-]
-```
-
-Run:
-
-```bash
-composer require stackful/framework-support:@dev
+php artisan framework-support:configure --file="/path/to/service-account.json"
 ```
 
 ---
@@ -221,19 +53,8 @@ composer require stackful/framework-support:@dev
 Execute PHPUnit test suite:
 
 ```bash
-composer test
-# or
 ./vendor/bin/phpunit
 ```
-
----
-
-## Release & Versioning
-
-This package follows [SemVer](https://semver.org/).
-- `1.0.0` - Initial production release.
-- `1.1.0` - Feature enhancements.
-- `2.0.0` - Breaking changes.
 
 ---
 

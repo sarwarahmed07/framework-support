@@ -8,11 +8,13 @@ class ApplicationContext
 {
     protected Application $app;
     protected string $packageVersion;
+    protected string $product;
 
-    public function __construct(Application $app, string $packageVersion = '1.0.0')
+    public function __construct(Application $app, string $packageVersion = '1.0.0', string $product = 'invoixpro')
     {
         $this->app = $app;
         $this->packageVersion = $packageVersion;
+        $this->product = $product;
     }
 
     /**
@@ -30,7 +32,11 @@ class ApplicationContext
             return !empty($configured) ? rtrim($configured, '/') : 'http://localhost';
         }
 
-        return rtrim((string) $this->app['request']->root(), '/');
+        if (isset($this->app['request'])) {
+            return rtrim((string) $this->app['request']->root(), '/');
+        }
+
+        return 'http://localhost';
     }
 
     /**
@@ -41,15 +47,18 @@ class ApplicationContext
         $url = $this->appUrl();
         $host = parse_url($url, PHP_URL_HOST);
 
-        if (!empty($host)) {
+        if (!empty($host) && $host !== 'localhost') {
             return (string) $host;
         }
 
         if (!$this->app->runningInConsole() && isset($this->app['request'])) {
-            return (string) $this->app['request']->getHost();
+            $reqHost = (string) $this->app['request']->getHost();
+            if (!empty($reqHost)) {
+                return $reqHost;
+            }
         }
 
-        return 'localhost';
+        return !empty($host) ? (string) $host : 'localhost';
     }
 
     /**
@@ -77,19 +86,11 @@ class ApplicationContext
     }
 
     /**
-     * Get the product identifier.
+     * Get the hardcoded self-contained product identifier.
      */
-    public function product(): ?string
+    public function product(): string
     {
-        return $this->app['config']->get('framework-support.product') ?: 'invoixpro';
-    }
-
-    /**
-     * Get the runtime key.
-     */
-    public function key(): ?string
-    {
-        return $this->app['config']->get('framework-support.key');
+        return $this->product;
     }
 
     /**

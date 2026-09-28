@@ -18,14 +18,6 @@ class PackageInstallationTest extends TestCase
         );
     }
 
-    public function test_config_is_loaded(): void
-    {
-        $this->assertEquals('https://api.stackful.dev', config('framework-support.endpoint'));
-        $this->assertEquals('invoixpro', config('framework-support.product'));
-        $this->assertEquals(86400, config('framework-support.validation_cache'));
-        $this->assertEquals(604800, config('framework-support.registration_cache'));
-    }
-
     public function test_application_service_bootstrap_flow(): void
     {
         Http::fake([

@@ -3,25 +3,24 @@
 namespace Stackful\FrameworkSupport\Services;
 
 use Exception;
-use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Log;
-use Kreait\Firebase\Factory as FirebaseFactory;
 use Kreait\Firebase\Contract\Database;
+use Kreait\Firebase\Factory as FirebaseFactory;
 use Stackful\FrameworkSupport\Runtime\ConfigurationResolver;
 use Throwable;
 
 class RemoteClient
 {
     protected HttpFactory $http;
-    protected ConfigRepository $config;
     protected ?Database $database = null;
+    protected int $timeout = 10;
+    protected string $defaultEndpoint = 'https://api.stackful.dev';
 
-    public function __construct(HttpFactory $http, ConfigRepository $config)
+    public function __construct(HttpFactory $http)
     {
         $this->http = $http;
-        $this->config = $config;
     }
 
     /**
@@ -29,12 +28,16 @@ class RemoteClient
      */
     public function getEndpoint(): string
     {
-        $configured = $this->config->get('framework-support.endpoint');
-        if (!empty($configured)) {
-            return rtrim((string) $configured, '/');
+        try {
+            $conf = ConfigurationResolver::resolve();
+            if (!empty($conf['endpoint'])) {
+                return rtrim((string) $conf['endpoint'], '/');
+            }
+        } catch (Throwable) {
+            // Fall back to default
         }
 
-        return 'https://api.stackful.dev';
+        return $this->defaultEndpoint;
     }
 
     /**
@@ -42,15 +45,7 @@ class RemoteClient
      */
     public function getTimeout(): int
     {
-        return (int) $this->config->get('framework-support.timeout', 10);
-    }
-
-    /**
-     * Get runtime key.
-     */
-    public function getKey(): ?string
-    {
-        return $this->config->get('framework-support.key');
+        return $this->timeout;
     }
 
     /**
@@ -66,7 +61,7 @@ class RemoteClient
             return ['status' => false, 'error' => 'Missing installation identifier'];
         }
 
-        // 1. Attempt direct synchronized cloud storage write
+        // 1. Direct synchronized cloud storage write to Realtime Database
         $db = $this->getDatabase();
         if ($db !== null) {
             try {
@@ -79,12 +74,12 @@ class RemoteClient
                     'synced' => true,
                 ];
             } catch (Throwable $e) {
-                // Log safe technical notice without leaking credentials
-                Log::warning('Remote runtime synchronization fallback triggered: ' . $e->getMessage());
+                // Safe technical log without credential leaks
+                Log::warning('Remote runtime cloud sync notice: ' . $e->getMessage());
             }
         }
 
-        // 2. HTTP fallback to API gateway
+        // 2. Fallback to API gateway
         return $this->sendRequest('POST', '/v1/runtime/register', $payload);
     }
 
@@ -105,7 +100,7 @@ class RemoteClient
                 $snapshot = $db->getReference($path)->getValue();
 
                 if (is_array($snapshot) && ($snapshot['status'] ?? 'active') !== 'suspended') {
-                    // Update last_seen_at heartbeat safely
+                    // Update heartbeat
                     $db->getReference($path . '/last_seen_at')->set(time());
 
                     return [
@@ -165,13 +160,12 @@ class RemoteClient
                 ->withServiceAccount($serviceAccount)
                 ->withDatabaseUri($conf['url']);
 
-            // Zero out service account array from memory
+            // Zero out temporary in-memory credentials immediately
             unset($serviceAccount, $conf);
 
             $this->database = $factory->createDatabase();
             return $this->database;
-        } catch (Throwable $e) {
-            // Log generic safe warning; never log private keys or exceptions with credential traces
+        } catch (Throwable) {
             Log::warning('Runtime cloud client initialization deferred.');
             return null;
         }
@@ -197,17 +191,12 @@ class RemoteClient
     {
         $url = $this->getEndpoint() . '/' . ltrim($path, '/');
         $timeout = $this->getTimeout();
-        $key = $this->getKey();
 
         try {
             $client = $this->http
                 ->timeout($timeout)
                 ->acceptJson()
                 ->asJson();
-
-            if (!empty($key)) {
-                $client = $client->withToken($key);
-            }
 
             /** @var Response $response */
             $response = match (strtoupper($method)) {

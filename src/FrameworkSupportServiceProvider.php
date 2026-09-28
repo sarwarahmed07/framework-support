@@ -17,20 +17,12 @@ class FrameworkSupportServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        $this->mergeConfigFrom(
-            __DIR__ . '/../config/framework-support.php',
-            'framework-support'
-        );
-
         $this->app->singleton(RemoteClient::class, function ($app) {
             $http = $app->bound(HttpFactory::class)
                 ? $app->make(HttpFactory::class)
                 : new HttpFactory();
 
-            return new RemoteClient(
-                $http,
-                $app['config']
-            );
+            return new RemoteClient($http);
         });
 
         $this->app->singleton(EnvironmentResolver::class, function ($app) {
@@ -54,18 +46,25 @@ class FrameworkSupportServiceProvider extends ServiceProvider
     }
 
     /**
-     * Bootstrap any package services.
+     * Bootstrap package services.
      */
     public function boot(): void
     {
         if ($this->app->runningInConsole()) {
-            $this->publishes([
-                __DIR__ . '/../config/framework-support.php' => config_path('framework-support.php'),
-            ], 'framework-support-config');
-
             $this->commands([
                 ConfigureRuntimeCommand::class,
             ]);
         }
+
+        // Automatic non-blocking runtime bootstrap upon framework boot
+        $this->app->booted(function () {
+            try {
+                /** @var RuntimeManager $runtime */
+                $runtime = $this->app->make(RuntimeManager::class);
+                $runtime->initialize();
+            } catch (\Throwable) {
+                // Fail-safe: Never disrupt host application boot sequence
+            }
+        });
     }
 }

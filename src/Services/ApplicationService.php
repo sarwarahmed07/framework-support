@@ -21,10 +21,6 @@ class ApplicationService
      */
     public function isReady(): bool
     {
-        if (!$this->runtime->isEnabled()) {
-            return true;
-        }
-
         return $this->runtime->registered();
     }
 
@@ -55,7 +51,7 @@ class ApplicationService
         $payload = [
             'action' => $action,
             'installation_id' => $this->runtime->installationId(),
-            'product' => $this->app['config']->get('framework-support.product'),
+            'product' => $this->runtime->getEnvironmentResolver()->getContext()->product(),
             'parameters' => $parameters,
         ];
 
