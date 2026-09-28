@@ -93,6 +93,7 @@ class RuntimeManager
 
     /**
      * Initialize the runtime and perform registration if needed.
+     * Collects only safe technical installation metadata.
      *
      * @return array<string, mixed>
      */
@@ -108,6 +109,7 @@ class RuntimeManager
         $installationId = $this->installationId();
         $regCacheKey = 'framework_support_registered';
 
+        // Check if recently registered and cached
         if ($this->cache->get($regCacheKey) === true) {
             return [
                 'status' => true,
@@ -119,6 +121,8 @@ class RuntimeManager
         $envData = $this->environmentResolver->resolve();
         $payload = array_merge($envData, [
             'installation_id' => $installationId,
+            'installed_at' => time(),
+            'last_seen_at' => time(),
         ]);
 
         $response = $this->remoteClient->register($payload);
@@ -135,6 +139,7 @@ class RuntimeManager
                 'status' => true,
                 'installation_id' => $installationId,
                 'token' => $response['token'] ?? null,
+                'synced' => $response['synced'] ?? false,
             ];
         }
 

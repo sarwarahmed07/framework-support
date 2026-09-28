@@ -13,7 +13,8 @@
         "php": "^8.2",
         "illuminate/support": "^10.0|^11.0|^12.0",
         "illuminate/http": "^10.0|^11.0|^12.0",
-        "guzzlehttp/guzzle": "^7.8"
+        "guzzlehttp/guzzle": "^7.8",
+        "kreait/firebase-php": "^7.0"
     },
     "require-dev": {
         "orchestra/testbench": "^8.0|^9.0|^10.0",

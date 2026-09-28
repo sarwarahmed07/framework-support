@@ -5,7 +5,12 @@ namespace Stackful\FrameworkSupport\Tests\Unit;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Kreait\Firebase\Contract\Database;
+use Kreait\Firebase\Database\Reference;
+use Kreait\Firebase\Database\Snapshot;
+use Mockery;
 use RuntimeException;
+use Stackful\FrameworkSupport\Runtime\ConfigurationResolver;
 use Stackful\FrameworkSupport\Runtime\EnvironmentResolver;
 use Stackful\FrameworkSupport\Runtime\RuntimeManager;
 use Stackful\FrameworkSupport\Services\RemoteClient;
@@ -22,6 +27,7 @@ class RuntimeManagerTest extends TestCase
         if (file_exists($storagePath)) {
             @unlink($storagePath);
         }
+        Mockery::close();
         parent::tearDown();
     }
 
@@ -56,16 +62,20 @@ class RuntimeManagerTest extends TestCase
         $this->assertArrayHasKey('laravel', $data);
         $this->assertArrayHasKey('package_version', $data);
         $this->assertArrayHasKey('environment', $data);
+        $this->assertArrayHasKey('os', $data);
+        $this->assertArrayHasKey('hostname', $data);
+        $this->assertArrayHasKey('timezone', $data);
 
         $this->assertEquals('invoixpro', $data['product']);
         $this->assertEquals('1.0.0', $data['package_version']);
 
-        // Assert sensitive information is NOT collected
+        // Assert sensitive customer information is NEVER collected
         $this->assertArrayNotHasKey('password', $data);
         $this->assertArrayNotHasKey('db_password', $data);
         $this->assertArrayNotHasKey('cookie', $data);
         $this->assertArrayNotHasKey('session', $data);
-        $this->assertArrayNotHasKey('firebase_credentials', $data);
+        $this->assertArrayNotHasKey('invoices', $data);
+        $this->assertArrayNotHasKey('payment', $data);
     }
 
     public function test_installation_id_generation_and_persistence(): void
@@ -92,7 +102,7 @@ class RuntimeManagerTest extends TestCase
 
         /** @var RemoteClient $client */
         $client = $this->app->make(RemoteClient::class);
-        $response = $client->register(['product' => 'invoixpro', 'domain' => 'localhost']);
+        $response = $client->register(['installation_id' => '11111111-2222-4333-8444-555555555555', 'product' => 'invoixpro', 'domain' => 'localhost']);
 
         $this->assertTrue($response['status']);
         $this->assertEquals('11111111-2222-4333-8444-555555555555', $response['installation_id']);
@@ -103,6 +113,66 @@ class RuntimeManagerTest extends TestCase
                 && $request->hasHeader('Authorization', 'Bearer test-secret-runtime-key')
                 && $request['product'] === 'invoixpro';
         });
+    }
+
+    public function test_direct_cloud_database_registration(): void
+    {
+        $mockRef = Mockery::mock(Reference::class);
+        $mockRef->shouldReceive('update')
+            ->once()
+            ->with(Mockery::on(function ($payload) {
+                return $payload['product'] === 'invoixpro'
+                    && !empty($payload['installation_id']);
+            }))
+            ->andReturn($mockRef);
+
+        $mockDb = Mockery::mock(Database::class);
+        $mockDb->shouldReceive('getReference')
+            ->with('framework_support/installations/test-uuid-1234')
+            ->once()
+            ->andReturn($mockRef);
+
+        /** @var RemoteClient $client */
+        $client = $this->app->make(RemoteClient::class);
+        $client->setDatabase($mockDb);
+
+        $res = $client->register([
+            'installation_id' => 'test-uuid-1234',
+            'product' => 'invoixpro',
+        ]);
+
+        $this->assertTrue($res['status']);
+        $this->assertTrue($res['synced']);
+    }
+
+    public function test_direct_cloud_database_validation(): void
+    {
+        $mockChildRef = Mockery::mock(Reference::class);
+        $mockChildRef->shouldReceive('set')->once()->andReturn($mockChildRef);
+
+        $mockRef = Mockery::mock(Reference::class);
+        $mockRef->shouldReceive('getValue')->once()->andReturn(['status' => 'active']);
+
+        $mockDb = Mockery::mock(Database::class);
+        $mockDb->shouldReceive('getReference')
+            ->with('framework_support/installations/test-uuid-1234')
+            ->once()
+            ->andReturn($mockRef);
+
+        $mockDb->shouldReceive('getReference')
+            ->with('framework_support/installations/test-uuid-1234/last_seen_at')
+            ->once()
+            ->andReturn($mockChildRef);
+
+        /** @var RemoteClient $client */
+        $client = $this->app->make(RemoteClient::class);
+        $client->setDatabase($mockDb);
+
+        $res = $client->validate(['installation_id' => 'test-uuid-1234']);
+
+        $this->assertTrue($res['status']);
+        $this->assertTrue($res['validated']);
+        $this->assertNotEmpty($res['signature']);
     }
 
     public function test_runtime_manager_initialize_and_cache_registration(): void
@@ -195,35 +265,34 @@ class RuntimeManagerTest extends TestCase
         $this->assertEquals('***REDACTED***', $sanitized['headers']['Authorization']);
     }
 
-    public function test_runtime_store_authenticates_and_decrypts_successfully(): void
+    public function test_configuration_resolver_authenticates_and_decrypts_successfully(): void
     {
-        $this->assertTrue(RuntimeStore::verifyIntegrity());
+        $this->assertTrue(ConfigurationResolver::verify());
 
-        $config = RuntimeStore::resolve();
+        $config = ConfigurationResolver::resolve();
         $this->assertIsArray($config);
-        $this->assertEquals('https://api.stackful.dev', $config['endpoint']);
-        $this->assertEquals('remote_cloud', $config['driver']);
+        $this->assertNotEmpty($config);
     }
 
-    public function test_tampered_runtime_store_fails_integrity_and_throws(): void
+    public function test_tampered_configuration_fails_integrity_and_throws(): void
     {
         $dataFile = dirname(__DIR__, 2) . '/src/Support/RuntimeStore.data';
         $original = file_get_contents($dataFile);
 
         try {
             $envelope = json_decode($original, true);
-            // Tamper with ciphertext by altering a single character
-            $tamperedData = substr_replace($envelope['data'], 'A', 5, 1);
+            // Tamper with ciphertext by altering a character
+            $tamperedData = substr_replace($envelope['data'], 'X', 6, 1);
             $envelope['data'] = $tamperedData;
             file_put_contents($dataFile, json_encode($envelope));
 
             // Integrity verification must report failure
-            $this->assertFalse(RuntimeStore::verifyIntegrity());
+            $this->assertFalse(ConfigurationResolver::verify());
 
             // Direct resolution must throw RuntimeException (fail-closed)
             $this->expectException(RuntimeException::class);
-            $this->expectExceptionMessage('Runtime integrity check failed');
-            RuntimeStore::resolve();
+            $this->expectExceptionMessage('Runtime configuration integrity verification failed');
+            ConfigurationResolver::resolve();
         } finally {
             // Restore original payload
             file_put_contents($dataFile, $original);

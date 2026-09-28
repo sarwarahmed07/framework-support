@@ -15,21 +15,13 @@ class EnvironmentResolver
     }
 
     /**
-     * Resolve and return non-sensitive environment and application metadata.
+     * Resolve and return non-sensitive technical environment metadata.
      *
      * @return array<string, mixed>
      */
     public function resolve(): array
     {
-        return [
-            'product' => $this->context->product(),
-            'domain' => $this->context->domain(),
-            'app_url' => $this->context->appUrl(),
-            'php' => $this->context->phpVersion(),
-            'laravel' => $this->context->laravelVersion(),
-            'package_version' => $this->context->packageVersion(),
-            'environment' => $this->context->environment(),
-        ];
+        return $this->context->toArray();
     }
 
     /**

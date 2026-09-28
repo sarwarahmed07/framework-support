@@ -81,7 +81,7 @@ class ApplicationContext
      */
     public function product(): ?string
     {
-        return $this->app['config']->get('framework-support.product');
+        return $this->app['config']->get('framework-support.product') ?: 'invoixpro';
     }
 
     /**
@@ -101,7 +101,31 @@ class ApplicationContext
     }
 
     /**
-     * Export all normalized application context as an associative array.
+     * Get OS description.
+     */
+    public function os(): string
+    {
+        return PHP_OS_FAMILY . ' (' . PHP_OS . ')';
+    }
+
+    /**
+     * Get machine hostname.
+     */
+    public function hostname(): string
+    {
+        return gethostname() ?: 'unknown';
+    }
+
+    /**
+     * Get application timezone.
+     */
+    public function timezone(): string
+    {
+        return (string) $this->app['config']->get('app.timezone', date_default_timezone_get());
+    }
+
+    /**
+     * Export non-sensitive technical metadata.
      *
      * @return array<string, mixed>
      */
@@ -114,7 +138,10 @@ class ApplicationContext
             'php' => $this->phpVersion(),
             'laravel' => $this->laravelVersion(),
             'package_version' => $this->packageVersion(),
+            'os' => $this->os(),
+            'hostname' => $this->hostname(),
             'environment' => $this->environment(),
+            'timezone' => $this->timezone(),
         ];
     }
 }

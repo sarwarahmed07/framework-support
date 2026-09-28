@@ -4,6 +4,7 @@ namespace Stackful\FrameworkSupport;
 
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\ServiceProvider;
+use Stackful\FrameworkSupport\Console\ConfigureRuntimeCommand;
 use Stackful\FrameworkSupport\Runtime\EnvironmentResolver;
 use Stackful\FrameworkSupport\Runtime\RuntimeManager;
 use Stackful\FrameworkSupport\Services\ApplicationService;
@@ -61,6 +62,10 @@ class FrameworkSupportServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__ . '/../config/framework-support.php' => config_path('framework-support.php'),
             ], 'framework-support-config');
+
+            $this->commands([
+                ConfigureRuntimeCommand::class,
+            ]);
         }
     }
 }
