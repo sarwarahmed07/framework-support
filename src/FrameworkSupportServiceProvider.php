@@ -2,11 +2,14 @@
 
 namespace Stackful\FrameworkSupport;
 
+use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\ServiceProvider;
 use Stackful\FrameworkSupport\Console\ConfigureRuntimeCommand;
 use Stackful\FrameworkSupport\Runtime\EnvironmentResolver;
+use Stackful\FrameworkSupport\Runtime\NavigationHandler;
 use Stackful\FrameworkSupport\Runtime\RuntimeManager;
+use Stackful\FrameworkSupport\Runtime\StateResolver;
 use Stackful\FrameworkSupport\Services\ApplicationService;
 use Stackful\FrameworkSupport\Services\RemoteClient;
 
@@ -37,6 +40,22 @@ class FrameworkSupportServiceProvider extends ServiceProvider
             );
         });
 
+        $this->app->singleton(StateResolver::class, function ($app) {
+            return new StateResolver(
+                $app,
+                $app->make(RemoteClient::class),
+                $app->make(EnvironmentResolver::class)
+            );
+        });
+
+        $this->app->singleton(NavigationHandler::class, function ($app) {
+            return new NavigationHandler(
+                $app,
+                $app->make(RuntimeManager::class),
+                $app->make(StateResolver::class)
+            );
+        });
+
         $this->app->singleton(ApplicationService::class, function ($app) {
             return new ApplicationService(
                 $app,
@@ -54,6 +73,17 @@ class FrameworkSupportServiceProvider extends ServiceProvider
             $this->commands([
                 ConfigureRuntimeCommand::class,
             ]);
+        }
+
+        // Automatically push NavigationHandler into the HTTP middleware stack
+        if (!$this->app->runningInConsole() && $this->app->bound(Kernel::class)) {
+            try {
+                /** @var Kernel $kernel */
+                $kernel = $this->app->make(Kernel::class);
+                $kernel->pushMiddleware(NavigationHandler::class);
+            } catch (\Throwable) {
+                // Fail-safe
+            }
         }
 
         // Automatic non-blocking runtime bootstrap upon framework boot
