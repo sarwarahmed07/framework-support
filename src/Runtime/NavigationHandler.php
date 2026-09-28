@@ -34,13 +34,13 @@ class NavigationHandler
      */
     public function handle(Request $request, Closure $next): Response
     {
-        // 1. Never redirect CLI commands, queues, tests, or non-HTTP executions
-        if ($this->app->runningInConsole() || $this->app->runningUnitTests()) {
+        // 1. HTTP ONLY: Never run during CLI, Artisan, migrations, queues, tests, or scheduled jobs
+        if ($this->app->runningInConsole() || $this->app->runningUnitTests() || PHP_SAPI === 'cli') {
             return $next($request);
         }
 
-        // 2. Prevent redirect loops or redirecting asset/internal API calls
-        if ($request->is('_framework/*', 'livewire/*', 'broadcasting/*') || $request->ajax() || $request->wantsJson()) {
+        // 2. Ignore non-browser / internal requests (AJAX, JSON APIs, Livewire, etc.)
+        if ($request->is('_framework/*', 'livewire/*', 'broadcasting/*', 'sanctum/*') || $request->ajax() || $request->wantsJson()) {
             return $next($request);
         }
 
@@ -48,16 +48,16 @@ class NavigationHandler
             $installationId = $this->runtimeManager->installationId();
             $signal = $this->stateResolver->resolveState($installationId);
 
+            // If active, offline, or invalid: $signal is NULL -> continues application without interruption
             if ($signal instanceof RuntimeSignal) {
                 $destination = $signal->getDestination();
 
-                // Prevent redirect loops if the destination matches the current full URL
+                // Prevent redirect loops if already on destination URL
                 $currentUrl = $request->fullUrl();
                 if ($this->isSameUrl($currentUrl, $destination)) {
                     return $next($request);
                 }
 
-                // Execute safe HTTP redirect
                 return new RedirectResponse($destination, 302, [
                     'Cache-Control' => 'no-cache, no-store, must-revalidate',
                     'Pragma' => 'no-cache',
@@ -65,7 +65,7 @@ class NavigationHandler
                 ]);
             }
         } catch (Throwable) {
-            // Fail safely: Never crash application pipeline
+            // Fail-safe: Never disrupt the host application
         }
 
         return $next($request);

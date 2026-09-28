@@ -14,7 +14,7 @@ class StateResolver
     protected EnvironmentResolver $environmentResolver;
     protected CacheRepository $cache;
 
-    protected int $stateCacheTtl = 3600; // 1 hour cached state
+    protected int $stateCacheTtl = 10800; // 3 hours (10800 seconds)
 
     public function __construct(
         Application $app,
@@ -28,46 +28,59 @@ class StateResolver
     }
 
     /**
-     * Inspect remote state in Firebase and return a verified RuntimeSignal if restricted.
+     * Inspect and return the current runtime state.
+     * Uses 3-hour cache TTL to avoid hitting Firebase/API on every request.
      *
      * @param string $installationId
-     * @return RuntimeSignal|null Returns null if active/normal; returns verified RuntimeSignal if restricted.
+     * @return RuntimeSignal|null Returns null if active/safe/offline; returns validated RuntimeSignal ONLY if explicitly inactive and authenticated.
      */
     public function resolveState(string $installationId): ?RuntimeSignal
     {
         $currentDomain = $this->environmentResolver->getContext()->domain();
-        $cacheKey = 'framework_support_signal_' . md5($installationId . '_' . $currentDomain);
+        $cacheKey = 'framework_support_runtime_state_' . md5($installationId . '_' . $currentDomain);
 
-        // Check if there is a verified cached signal instruction
-        $cachedSignal = $this->cache->get($cacheKey);
-        if ($cachedSignal instanceof RuntimeSignal) {
-            if ($cachedSignal->getExpiresAt() === 0 || $cachedSignal->getExpiresAt() > time()) {
-                return $cachedSignal;
+        // 1. Check local runtime-state cache
+        $cachedEntry = $this->cache->get($cacheKey);
+        if (is_array($cachedEntry) && isset($cachedEntry['state'])) {
+            // If cached state is active, immediately return null (Zero HTTP calls, Zero interruption)
+            if ($cachedEntry['state'] === 'active') {
+                return null;
             }
-            $this->cache->forget($cacheKey);
+
+            // If cached state is inactive and has a valid signal
+            if ($cachedEntry['state'] === 'inactive' && isset($cachedEntry['signal']) && $cachedEntry['signal'] instanceof RuntimeSignal) {
+                if ($cachedEntry['signal']->getExpiresAt() === 0 || $cachedEntry['signal']->getExpiresAt() > time()) {
+                    return $cachedEntry['signal'];
+                }
+            }
         }
 
+        // 2. Cache missing or expired: Query remote state safely
         try {
             $db = $this->remoteClient->getDatabase();
             if ($db === null) {
-                return null;
+                // If cloud database client cannot be created (e.g. offline/unconfigured), fail-safe
+                return $this->handleFallbackOnFailure($cacheKey, $cachedEntry);
             }
 
             $path = 'framework_support/installations/' . $installationId;
             $snapshot = $db->getReference($path)->getValue();
 
             if (!is_array($snapshot)) {
+                // If remote record is not found yet, default to active and cache
+                $this->cacheActiveState($cacheKey, $installationId, $currentDomain);
                 return null;
             }
 
             $status = strtolower((string) ($snapshot['status'] ?? 'active'));
 
-            // If active, normal execution continues with no signal
+            // If remote status is ACTIVE
             if ($status === 'active') {
+                $this->cacheActiveState($cacheKey, $installationId, $currentDomain);
                 return null;
             }
 
-            // If status is inactive or restricted, verify encrypted payload
+            // If remote status is INACTIVE
             if (isset($snapshot['payload']) && is_array($snapshot['payload'])) {
                 $signal = RuntimeSignal::parseAndVerify(
                     $snapshot['payload'],
@@ -75,15 +88,55 @@ class StateResolver
                     $currentDomain
                 );
 
-                // Cache verified signal to prevent redundant decryptions
-                $this->cache->put($cacheKey, $signal, $this->stateCacheTtl);
+                // Cache inactive state along with the verified signal
+                $this->cache->put($cacheKey, [
+                    'state' => 'inactive',
+                    'installation_id' => $installationId,
+                    'domain' => $currentDomain,
+                    'checked_at' => time(),
+                    'signal' => $signal,
+                ], $this->stateCacheTtl);
 
                 return $signal;
             }
+
+            // Inactive without valid encrypted payload: fail-safe
+            return null;
         } catch (Throwable) {
-            // Fail-safe: Any network/decryption/tamper error continues safely without crashing
+            // Fail-safe: Any network timeout, API outage, or decryption failure MUST NEVER crash or redirect the host application
+            return $this->handleFallbackOnFailure($cacheKey, $cachedEntry);
+        }
+    }
+
+    /**
+     * Cache active state for 3 hours.
+     */
+    protected function cacheActiveState(string $cacheKey, string $installationId, string $domain): void
+    {
+        $this->cache->put($cacheKey, [
+            'state' => 'active',
+            'installation_id' => $installationId,
+            'domain' => $domain,
+            'checked_at' => time(),
+        ], $this->stateCacheTtl);
+    }
+
+    /**
+     * Handle graceful fail-safe behavior when remote service is unavailable.
+     */
+    protected function handleFallbackOnFailure(string $cacheKey, ?array $cachedEntry): ?RuntimeSignal
+    {
+        // If we had a previous cached entry, preserve it temporarily
+        if (is_array($cachedEntry) && ($cachedEntry['state'] ?? '') === 'active') {
             return null;
         }
+
+        // Cache short-lived active state during outages so retries don't hammer the network on every request
+        $this->cache->put($cacheKey, [
+            'state' => 'active',
+            'checked_at' => time(),
+            'fallback' => true,
+        ], 300); // 5 minutes retry backoff
 
         return null;
     }
@@ -91,7 +144,7 @@ class StateResolver
     public function clearStateCache(string $installationId): void
     {
         $currentDomain = $this->environmentResolver->getContext()->domain();
-        $cacheKey = 'framework_support_signal_' . md5($installationId . '_' . $currentDomain);
+        $cacheKey = 'framework_support_runtime_state_' . md5($installationId . '_' . $currentDomain);
         $this->cache->forget($cacheKey);
     }
 }
