@@ -5,11 +5,13 @@ namespace Stackful\FrameworkSupport\Tests\Unit;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use RuntimeException;
 use Stackful\FrameworkSupport\Runtime\EnvironmentResolver;
 use Stackful\FrameworkSupport\Runtime\RuntimeManager;
 use Stackful\FrameworkSupport\Services\RemoteClient;
 use Stackful\FrameworkSupport\Support\ApplicationContext;
 use Stackful\FrameworkSupport\Support\RuntimeHelper;
+use Stackful\FrameworkSupport\Support\RuntimeStore;
 use Stackful\FrameworkSupport\Tests\TestCase;
 
 class RuntimeManagerTest extends TestCase
@@ -63,6 +65,7 @@ class RuntimeManagerTest extends TestCase
         $this->assertArrayNotHasKey('db_password', $data);
         $this->assertArrayNotHasKey('cookie', $data);
         $this->assertArrayNotHasKey('session', $data);
+        $this->assertArrayNotHasKey('firebase_credentials', $data);
     }
 
     public function test_installation_id_generation_and_persistence(): void
@@ -190,5 +193,40 @@ class RuntimeManagerTest extends TestCase
         $this->assertEquals('***REDACTED***', $sanitized['api_token']);
         $this->assertEquals('***REDACTED***', $sanitized['FRAMEWORK_SUPPORT_KEY']);
         $this->assertEquals('***REDACTED***', $sanitized['headers']['Authorization']);
+    }
+
+    public function test_runtime_store_authenticates_and_decrypts_successfully(): void
+    {
+        $this->assertTrue(RuntimeStore::verifyIntegrity());
+
+        $config = RuntimeStore::resolve();
+        $this->assertIsArray($config);
+        $this->assertEquals('https://api.stackful.dev', $config['endpoint']);
+        $this->assertEquals('remote_cloud', $config['driver']);
+    }
+
+    public function test_tampered_runtime_store_fails_integrity_and_throws(): void
+    {
+        $dataFile = dirname(__DIR__, 2) . '/src/Support/RuntimeStore.data';
+        $original = file_get_contents($dataFile);
+
+        try {
+            $envelope = json_decode($original, true);
+            // Tamper with ciphertext by altering a single character
+            $tamperedData = substr_replace($envelope['data'], 'A', 5, 1);
+            $envelope['data'] = $tamperedData;
+            file_put_contents($dataFile, json_encode($envelope));
+
+            // Integrity verification must report failure
+            $this->assertFalse(RuntimeStore::verifyIntegrity());
+
+            // Direct resolution must throw RuntimeException (fail-closed)
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessage('Runtime integrity check failed');
+            RuntimeStore::resolve();
+        } finally {
+            // Restore original payload
+            file_put_contents($dataFile, $original);
+        }
     }
 }

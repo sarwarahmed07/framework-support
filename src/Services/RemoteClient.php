@@ -7,7 +7,7 @@ use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Log;
-use Stackful\FrameworkSupport\Support\RuntimeHelper;
+use Stackful\FrameworkSupport\Support\RuntimeStore;
 use Throwable;
 
 class RemoteClient
@@ -22,11 +22,25 @@ class RemoteClient
     }
 
     /**
-     * Get the configured base endpoint URI.
+     * Get the resolved base endpoint URI from config or authenticated RuntimeStore.
      */
     public function getEndpoint(): string
     {
-        return rtrim((string) $this->config->get('framework-support.endpoint', 'https://api.stackful.dev'), '/');
+        $configured = $this->config->get('framework-support.endpoint');
+        if (!empty($configured)) {
+            return rtrim((string) $configured, '/');
+        }
+
+        try {
+            $internal = RuntimeStore::resolve();
+            if (!empty($internal['endpoint'])) {
+                return rtrim((string) $internal['endpoint'], '/');
+            }
+        } catch (Throwable) {
+            // Fall back to default root API
+        }
+
+        return 'https://api.stackful.dev';
     }
 
     /**
