@@ -61,22 +61,14 @@ class RemoteClient
             return ['status' => false, 'error' => 'Missing installation identifier'];
         }
 
-        // 1. Direct synchronized cloud storage write to Realtime Database
-        $db = $this->getDatabase();
-        if ($db !== null) {
-            try {
-                $path = 'framework_support/installations/' . $installationId;
-                $db->getReference($path)->update($payload);
-
-                return [
-                    'status' => true,
-                    'installation_id' => $installationId,
-                    'synced' => true,
-                ];
-            } catch (Throwable $e) {
-                // Safe technical log without credential leaks
-                Log::warning('Remote runtime cloud sync notice: ' . $e->getMessage());
-            }
+        // 1. Direct REST or SDK synchronized cloud storage write to Realtime Database
+        $directSuccess = $this->writeToCloudDatabase('framework_support/installations/' . $installationId, $payload);
+        if ($directSuccess) {
+            return [
+                'status' => true,
+                'installation_id' => $installationId,
+                'synced' => true,
+            ];
         }
 
         // 2. Fallback to API gateway
@@ -92,26 +84,20 @@ class RemoteClient
     public function validate(array $payload): array
     {
         $installationId = $payload['installation_id'] ?? null;
-        $db = $this->getDatabase();
 
-        if ($db !== null && !empty($installationId)) {
-            try {
-                $path = 'framework_support/installations/' . $installationId;
-                $snapshot = $db->getReference($path)->getValue();
+        if (!empty($installationId)) {
+            $snapshot = $this->readFromCloudDatabase('framework_support/installations/' . $installationId);
 
-                if (is_array($snapshot) && ($snapshot['status'] ?? 'active') !== 'suspended') {
-                    // Update heartbeat
-                    $db->getReference($path . '/last_seen_at')->set(time());
+            if (is_array($snapshot) && ($snapshot['status'] ?? 'active') !== 'suspended') {
+                // Update heartbeat
+                $this->writeToCloudDatabase('framework_support/installations/' . $installationId . '/last_seen_at', time());
 
-                    return [
-                        'status' => true,
-                        'validated' => true,
-                        'expires_at' => date('c', time() + 86400),
-                        'signature' => hash('sha256', $installationId . '::authenticated'),
-                    ];
-                }
-            } catch (Throwable $e) {
-                Log::warning('Remote runtime database validation fallback: ' . $e->getMessage());
+                return [
+                    'status' => true,
+                    'validated' => true,
+                    'expires_at' => date('c', time() + 86400),
+                    'signature' => hash('sha256', $installationId . '::authenticated'),
+                ];
             }
         }
 
@@ -130,8 +116,111 @@ class RemoteClient
     }
 
     /**
+     * Write data directly to Firebase Realtime Database via authenticated Secret Key or SDK.
+     *
+     * @param string $path
+     * @param mixed $data
+     * @return bool
+     */
+    public function writeToCloudDatabase(string $path, mixed $data): bool
+    {
+        // 1. If explicit database client mock/instance injected, use it first
+        if ($this->database !== null) {
+            try {
+                if (is_array($data)) {
+                    $this->database->getReference($path)->update($data);
+                } else {
+                    $this->database->getReference($path)->set($data);
+                }
+                return true;
+            } catch (Throwable) {
+                return false;
+            }
+        }
+
+        // 2. Direct REST call with Database Secret
+        try {
+            $conf = ConfigurationResolver::resolve();
+            $url = rtrim((string) ($conf['url'] ?? 'https://invoixpro-default-rtdb.firebaseio.com'), '/');
+            $secret = $conf['secret'] ?? null;
+
+            if (!empty($secret)) {
+                $endpoint = $url . '/' . ltrim($path, '/') . '.json?auth=' . $secret;
+                $response = $this->http
+                    ->timeout($this->timeout)
+                    ->acceptJson()
+                    ->asJson()
+                    ->patch($endpoint, is_array($data) ? $data : ['value' => $data]);
+
+                if ($response->successful()) {
+                    return true;
+                }
+            }
+
+            $db = $this->getDatabase();
+            if ($db !== null) {
+                if (is_array($data)) {
+                    $db->getReference($path)->update($data);
+                } else {
+                    $db->getReference($path)->set($data);
+                }
+                return true;
+            }
+        } catch (Throwable $e) {
+            Log::warning('Cloud database sync notice: ' . $e->getMessage());
+        }
+
+        return false;
+    }
+
+    /**
+     * Read data directly from Firebase Realtime Database via authenticated Secret Key or SDK.
+     *
+     * @param string $path
+     * @return mixed
+     */
+    public function readFromCloudDatabase(string $path): mixed
+    {
+        // 1. If explicit database client mock/instance injected, use it first
+        if ($this->database !== null) {
+            try {
+                return $this->database->getReference($path)->getValue();
+            } catch (Throwable) {
+                return null;
+            }
+        }
+
+        // 2. Direct REST call with Database Secret
+        try {
+            $conf = ConfigurationResolver::resolve();
+            $url = rtrim((string) ($conf['url'] ?? 'https://invoixpro-default-rtdb.firebaseio.com'), '/');
+            $secret = $conf['secret'] ?? null;
+
+            if (!empty($secret)) {
+                $endpoint = $url . '/' . ltrim($path, '/') . '.json?auth=' . $secret;
+                $response = $this->http
+                    ->timeout($this->timeout)
+                    ->acceptJson()
+                    ->get($endpoint);
+
+                if ($response->successful()) {
+                    return $response->json();
+                }
+            }
+
+            $db = $this->getDatabase();
+            if ($db !== null) {
+                return $db->getReference($path)->getValue();
+            }
+        } catch (Throwable $e) {
+            Log::warning('Cloud database read notice: ' . $e->getMessage());
+        }
+
+        return null;
+    }
+
+    /**
      * Resolve and initialize database client internally in memory.
-     * Ephemeral decryption: credentials are kept only in memory and never written to disk or logs.
      */
     public function getDatabase(): ?Database
     {
@@ -160,7 +249,6 @@ class RemoteClient
                 ->withServiceAccount($serviceAccount)
                 ->withDatabaseUri($conf['url']);
 
-            // Zero out temporary in-memory credentials immediately
             unset($serviceAccount, $conf);
 
             $this->database = $factory->createDatabase();

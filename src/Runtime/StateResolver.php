@@ -42,12 +42,10 @@ class StateResolver
         // 1. Check local runtime-state cache
         $cachedEntry = $this->cache->get($cacheKey);
         if (is_array($cachedEntry) && isset($cachedEntry['state'])) {
-            // If cached state is active, immediately return null (Zero HTTP calls, Zero interruption)
             if ($cachedEntry['state'] === 'active') {
                 return null;
             }
 
-            // If cached state is inactive and has a valid signal
             if ($cachedEntry['state'] === 'inactive' && isset($cachedEntry['signal']) && $cachedEntry['signal'] instanceof RuntimeSignal) {
                 if ($cachedEntry['signal']->getExpiresAt() === 0 || $cachedEntry['signal']->getExpiresAt() > time()) {
                     return $cachedEntry['signal'];
@@ -55,15 +53,10 @@ class StateResolver
             }
         }
 
-        // 2. Cache missing or expired: Query remote state safely
+        // 2. Query remote state safely via REST or SDK
         try {
-            $db = $this->remoteClient->getDatabase();
-            if ($db === null) {
-                return $this->handleFallbackOnFailure($cacheKey, $cachedEntry);
-            }
-
             $path = 'framework_support/installations/' . $installationId;
-            $snapshot = $db->getReference($path)->getValue();
+            $snapshot = $this->remoteClient->readFromCloudDatabase($path);
 
             if (!is_array($snapshot)) {
                 $this->cacheActiveState($cacheKey, $installationId, $currentDomain);
@@ -80,7 +73,6 @@ class StateResolver
 
             // If remote status is INACTIVE
             if ($status === 'inactive' || $status === 'disabled' || $status === 'suspended') {
-                // If a custom payload was provided in Firebase, verify it strictly (fail-closed if tampered)
                 if (isset($snapshot['payload']) && is_array($snapshot['payload'])) {
                     $signal = RuntimeSignal::parseAndVerify(
                         $snapshot['payload'],
@@ -99,7 +91,6 @@ class StateResolver
                     return $signal;
                 }
 
-                // If status is inactive without custom payload, use default encrypted destination
                 $defaultUrl = NavigationHandler::resolveDefaultDestination();
                 if (!empty($defaultUrl)) {
                     $signal = new RuntimeSignal(

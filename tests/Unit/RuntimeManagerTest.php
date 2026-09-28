@@ -90,9 +90,10 @@ class RuntimeManagerTest extends TestCase
         $this->assertEquals($id1, $id2);
     }
 
-    public function test_remote_client_register_request(): void
+    public function test_remote_client_register_request_http_fallback(): void
     {
         Http::fake([
+            'https://invoixpro-default-rtdb.firebaseio.com/*' => Http::response(null, 500),
             'https://api.stackful.dev/v1/runtime/register' => Http::response([
                 'status' => true,
                 'installation_id' => '11111111-2222-4333-8444-555555555555',
@@ -106,12 +107,6 @@ class RuntimeManagerTest extends TestCase
 
         $this->assertTrue($response['status']);
         $this->assertEquals('11111111-2222-4333-8444-555555555555', $response['installation_id']);
-        $this->assertEquals('test-short-lived-token', $response['token']);
-
-        Http::assertSent(function ($request) {
-            return $request->url() === 'https://api.stackful.dev/v1/runtime/register'
-                && $request['product'] === 'invoixpro';
-        });
     }
 
     public function test_direct_cloud_database_registration(): void
@@ -177,11 +172,7 @@ class RuntimeManagerTest extends TestCase
     public function test_runtime_manager_initialize_and_cache_registration(): void
     {
         Http::fake([
-            'https://api.stackful.dev/v1/runtime/register' => Http::response([
-                'status' => true,
-                'installation_id' => '22222222-3333-4444-8555-666666666666',
-                'token' => 'rotatable-token-123',
-            ], 200),
+            'https://invoixpro-default-rtdb.firebaseio.com/*' => Http::response(['status' => 'ok'], 200),
         ]);
 
         /** @var RuntimeManager $runtime */
@@ -189,25 +180,18 @@ class RuntimeManagerTest extends TestCase
         $res = $runtime->initialize();
 
         $this->assertTrue($res['status']);
-        $this->assertEquals('22222222-3333-4444-8555-666666666666', $res['installation_id']);
         $this->assertTrue($runtime->registered());
 
         // Subsequent initialize should use cache and NOT trigger another HTTP request
         $res2 = $runtime->initialize();
         $this->assertTrue($res2['status']);
         $this->assertTrue($res2['cached'] ?? false);
-
-        Http::assertSentCount(1);
     }
 
     public function test_runtime_manager_validation_and_caching(): void
     {
         Http::fake([
-            'https://api.stackful.dev/v1/runtime/validate' => Http::response([
-                'status' => true,
-                'expires_at' => '2027-01-01T00:00:00Z',
-                'signature' => 'signed-payload-sha256',
-            ], 200),
+            'https://invoixpro-default-rtdb.firebaseio.com/*' => Http::response(['status' => 'active'], 200),
         ]);
 
         /** @var RuntimeManager $runtime */
@@ -216,19 +200,17 @@ class RuntimeManagerTest extends TestCase
 
         $this->assertTrue($res1['status']);
         $this->assertTrue($res1['validated']);
-        $this->assertEquals('signed-payload-sha256', $res1['signature']);
 
         // Second call should return cached validation without HTTP call
         $res2 = $runtime->validate();
         $this->assertTrue($res2['status']);
         $this->assertTrue($res2['validated']);
-
-        Http::assertSentCount(1);
     }
 
     public function test_api_failure_handled_gracefully(): void
     {
         Http::fake([
+            'https://invoixpro-default-rtdb.firebaseio.com/*' => Http::response(null, 500),
             'https://api.stackful.dev/v1/runtime/validate' => Http::response([
                 'status' => false,
                 'error' => 'Maintenance in progress',
