@@ -40,6 +40,7 @@ class RuntimeManager
         return true;
     }
 
+    
     /**
      * Get or generate the unique installation ID for this application.
      */
