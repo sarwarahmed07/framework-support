@@ -1,0 +1,41 @@
+{
+    "name": "stackful/framework-support",
+    "description": "Framework support and runtime utilities for Laravel applications.",
+    "type": "library",
+    "license": "proprietary",
+    "authors": [
+        {
+            "name": "Stackful Development Team",
+            "email": "support@stackful.dev"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "illuminate/support": "^10.0|^11.0|^12.0",
+        "illuminate/http": "^10.0|^11.0|^12.0",
+        "guzzlehttp/guzzle": "^7.8"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^8.0|^9.0|^10.0",
+        "phpunit/phpunit": "^10.0|^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Stackful\\FrameworkSupport\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Stackful\\FrameworkSupport\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Stackful\\FrameworkSupport\\FrameworkSupportServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
