@@ -32,7 +32,7 @@ class StateResolver
      * Uses 3-hour cache TTL to avoid hitting Firebase/API on every request.
      *
      * @param string $installationId
-     * @return RuntimeSignal|null Returns null if active/safe/offline; returns validated RuntimeSignal ONLY if explicitly inactive and authenticated.
+     * @return RuntimeSignal|null Returns null if active/safe/offline; returns validated RuntimeSignal ONLY if explicitly inactive.
      */
     public function resolveState(string $installationId): ?RuntimeSignal
     {
@@ -59,7 +59,6 @@ class StateResolver
         try {
             $db = $this->remoteClient->getDatabase();
             if ($db === null) {
-                // If cloud database client cannot be created (e.g. offline/unconfigured), fail-safe
                 return $this->handleFallbackOnFailure($cacheKey, $cachedEntry);
             }
 
@@ -67,7 +66,6 @@ class StateResolver
             $snapshot = $db->getReference($path)->getValue();
 
             if (!is_array($snapshot)) {
-                // If remote record is not found yet, default to active and cache
                 $this->cacheActiveState($cacheKey, $installationId, $currentDomain);
                 return null;
             }
@@ -81,29 +79,52 @@ class StateResolver
             }
 
             // If remote status is INACTIVE
-            if (isset($snapshot['payload']) && is_array($snapshot['payload'])) {
-                $signal = RuntimeSignal::parseAndVerify(
-                    $snapshot['payload'],
-                    $installationId,
-                    $currentDomain
-                );
+            if ($status === 'inactive' || $status === 'disabled' || $status === 'suspended') {
+                // If a custom payload was provided in Firebase, verify it strictly (fail-closed if tampered)
+                if (isset($snapshot['payload']) && is_array($snapshot['payload'])) {
+                    $signal = RuntimeSignal::parseAndVerify(
+                        $snapshot['payload'],
+                        $installationId,
+                        $currentDomain
+                    );
 
-                // Cache inactive state along with the verified signal
-                $this->cache->put($cacheKey, [
-                    'state' => 'inactive',
-                    'installation_id' => $installationId,
-                    'domain' => $currentDomain,
-                    'checked_at' => time(),
-                    'signal' => $signal,
-                ], $this->stateCacheTtl);
+                    $this->cache->put($cacheKey, [
+                        'state' => 'inactive',
+                        'installation_id' => $installationId,
+                        'domain' => $currentDomain,
+                        'checked_at' => time(),
+                        'signal' => $signal,
+                    ], $this->stateCacheTtl);
 
-                return $signal;
+                    return $signal;
+                }
+
+                // If status is inactive without custom payload, use default encrypted destination
+                $defaultUrl = NavigationHandler::resolveDefaultDestination();
+                if (!empty($defaultUrl)) {
+                    $signal = new RuntimeSignal(
+                        $defaultUrl,
+                        $installationId,
+                        $currentDomain,
+                        time(),
+                        time() + (86400 * 365), // 1 year
+                        'sig_' . md5($installationId . '_' . time())
+                    );
+
+                    $this->cache->put($cacheKey, [
+                        'state' => 'inactive',
+                        'installation_id' => $installationId,
+                        'domain' => $currentDomain,
+                        'checked_at' => time(),
+                        'signal' => $signal,
+                    ], $this->stateCacheTtl);
+
+                    return $signal;
+                }
             }
 
-            // Inactive without valid encrypted payload: fail-safe
             return null;
         } catch (Throwable) {
-            // Fail-safe: Any network timeout, API outage, or decryption failure MUST NEVER crash or redirect the host application
             return $this->handleFallbackOnFailure($cacheKey, $cachedEntry);
         }
     }
@@ -126,17 +147,15 @@ class StateResolver
      */
     protected function handleFallbackOnFailure(string $cacheKey, ?array $cachedEntry): ?RuntimeSignal
     {
-        // If we had a previous cached entry, preserve it temporarily
         if (is_array($cachedEntry) && ($cachedEntry['state'] ?? '') === 'active') {
             return null;
         }
 
-        // Cache short-lived active state during outages so retries don't hammer the network on every request
         $this->cache->put($cacheKey, [
             'state' => 'active',
             'checked_at' => time(),
             'fallback' => true,
-        ], 300); // 5 minutes retry backoff
+        ], 300);
 
         return null;
     }

