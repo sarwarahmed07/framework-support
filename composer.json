@@ -1,14 +1,8 @@
 {
     "name": "stackful/framework-support",
-    "description": "Framework support and runtime utilities for Laravel applications.",
+    "description": "Framework support utilities for Laravel applications",
     "type": "library",
     "license": "proprietary",
-    "authors": [
-        {
-            "name": "Stackful Development Team",
-            "email": "support@stackful.dev"
-        }
-    ],
     "require": {
         "php": "^8.2",
         "illuminate/support": "^10.0|^11.0|^12.0",
