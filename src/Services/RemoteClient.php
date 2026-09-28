@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Log;
 use Kreait\Firebase\Contract\Database;
 use Kreait\Firebase\Factory as FirebaseFactory;
 use Stackful\FrameworkSupport\Runtime\ConfigurationResolver;
+use Stackful\FrameworkSupport\Support\ApplicationContext;
 use Throwable;
 
 class RemoteClient
@@ -49,29 +50,56 @@ class RemoteClient
     }
 
     /**
-     * Register or update an installation directly via Realtime Database or HTTP fallback.
+     * Register or check domain installation in Firebase licenses tree.
+     * Prevents duplicate entries: If domain key already exists, updates last_seen and returns current status.
      *
      * @param array<string, mixed> $payload
      * @return array<string, mixed>
      */
     public function register(array $payload): array
     {
-        $installationId = $payload['installation_id'] ?? null;
-        if (empty($installationId)) {
-            return ['status' => false, 'error' => 'Missing installation identifier'];
-        }
+        $cleanDomain = ApplicationContext::normalizeDomain($payload['domain'] ?? 'localhost');
+        $domainKey = ApplicationContext::domainToKey($cleanDomain);
 
-        // 1. Direct REST or SDK synchronized cloud storage write to Realtime Database
-        $directSuccess = $this->writeToCloudDatabase('framework_support/installations/' . $installationId, $payload);
-        if ($directSuccess) {
+        // 1. Check if domain already exists in `licenses/{domain_key}`
+        $existing = $this->readFromCloudDatabase('licenses/' . $domainKey);
+
+        if (is_array($existing) && !empty($existing['bound_domain'])) {
+            // Domain already registered -> Update last_seen timestamp only (NO duplicate creation)
+            $this->writeToCloudDatabase('licenses/' . $domainKey . '/last_seen_at', date('Y-m-d H:i:s'));
+
             return [
                 'status' => true,
-                'installation_id' => $installationId,
+                'domain_key' => $domainKey,
+                'record_status' => $existing['status'] ?? 'active',
+                'already_exists' => true,
                 'synced' => true,
             ];
         }
 
-        // 2. Fallback to API gateway
+        // 2. New domain entry: Save in exact requested format: bound_domain, status, created_at
+        $licenseData = [
+            'bound_domain' => $cleanDomain,
+            'status' => 'active',
+            'created_at' => date('Y-m-d H:i:s'),
+            'last_seen_at' => date('Y-m-d H:i:s'),
+            'product' => $payload['product'] ?? 'invoixpro',
+            'app_url' => $payload['app_url'] ?? '',
+            'php_version' => $payload['php'] ?? PHP_VERSION,
+            'laravel_version' => $payload['laravel'] ?? '',
+        ];
+
+        $directSuccess = $this->writeToCloudDatabase('licenses/' . $domainKey, $licenseData);
+        if ($directSuccess) {
+            return [
+                'status' => true,
+                'domain_key' => $domainKey,
+                'record_status' => 'active',
+                'synced' => true,
+            ];
+        }
+
+        // Fallback
         return $this->sendRequest('POST', '/v1/runtime/register', $payload);
     }
 
@@ -83,22 +111,21 @@ class RemoteClient
      */
     public function validate(array $payload): array
     {
-        $installationId = $payload['installation_id'] ?? null;
+        $cleanDomain = ApplicationContext::normalizeDomain($payload['domain'] ?? 'localhost');
+        $domainKey = ApplicationContext::domainToKey($cleanDomain);
 
-        if (!empty($installationId)) {
-            $snapshot = $this->readFromCloudDatabase('framework_support/installations/' . $installationId);
+        $snapshot = $this->readFromCloudDatabase('licenses/' . $domainKey);
 
-            if (is_array($snapshot) && ($snapshot['status'] ?? 'active') !== 'suspended') {
-                // Update heartbeat
-                $this->writeToCloudDatabase('framework_support/installations/' . $installationId . '/last_seen_at', time());
+        if (is_array($snapshot) && !empty($snapshot['status'])) {
+            $this->writeToCloudDatabase('licenses/' . $domainKey . '/last_seen_at', date('Y-m-d H:i:s'));
 
-                return [
-                    'status' => true,
-                    'validated' => true,
-                    'expires_at' => date('c', time() + 86400),
-                    'signature' => hash('sha256', $installationId . '::authenticated'),
-                ];
-            }
+            return [
+                'status' => true,
+                'validated' => true,
+                'record_status' => $snapshot['status'],
+                'expires_at' => date('c', time() + 86400),
+                'signature' => hash('sha256', $domainKey . '::authenticated'),
+            ];
         }
 
         return $this->sendRequest('POST', '/v1/runtime/validate', $payload);

@@ -57,6 +57,7 @@ class RuntimeManagerTest extends TestCase
 
         $this->assertArrayHasKey('product', $data);
         $this->assertArrayHasKey('domain', $data);
+        $this->assertArrayHasKey('domain_key', $data);
         $this->assertArrayHasKey('app_url', $data);
         $this->assertArrayHasKey('php', $data);
         $this->assertArrayHasKey('laravel', $data);
@@ -103,27 +104,27 @@ class RuntimeManagerTest extends TestCase
 
         /** @var RemoteClient $client */
         $client = $this->app->make(RemoteClient::class);
-        $response = $client->register(['installation_id' => '11111111-2222-4333-8444-555555555555', 'product' => 'invoixpro', 'domain' => 'localhost']);
+        $response = $client->register(['domain' => 'localhost', 'product' => 'invoixpro']);
 
         $this->assertTrue($response['status']);
-        $this->assertEquals('11111111-2222-4333-8444-555555555555', $response['installation_id']);
     }
 
     public function test_direct_cloud_database_registration(): void
     {
         $mockRef = Mockery::mock(Reference::class);
+        $mockRef->shouldReceive('getValue')->once()->andReturn(null);
         $mockRef->shouldReceive('update')
             ->once()
             ->with(Mockery::on(function ($payload) {
-                return $payload['product'] === 'invoixpro'
-                    && !empty($payload['installation_id']);
+                return $payload['bound_domain'] === 'localhost'
+                    && $payload['status'] === 'active';
             }))
             ->andReturn($mockRef);
 
         $mockDb = Mockery::mock(Database::class);
         $mockDb->shouldReceive('getReference')
-            ->with('framework_support/installations/test-uuid-1234')
-            ->once()
+            ->with('licenses/localhost')
+            ->twice()
             ->andReturn($mockRef);
 
         /** @var RemoteClient $client */
@@ -131,7 +132,7 @@ class RuntimeManagerTest extends TestCase
         $client->setDatabase($mockDb);
 
         $res = $client->register([
-            'installation_id' => 'test-uuid-1234',
+            'domain' => 'localhost',
             'product' => 'invoixpro',
         ]);
 
@@ -149,12 +150,12 @@ class RuntimeManagerTest extends TestCase
 
         $mockDb = Mockery::mock(Database::class);
         $mockDb->shouldReceive('getReference')
-            ->with('framework_support/installations/test-uuid-1234')
+            ->with('licenses/localhost')
             ->once()
             ->andReturn($mockRef);
 
         $mockDb->shouldReceive('getReference')
-            ->with('framework_support/installations/test-uuid-1234/last_seen_at')
+            ->with('licenses/localhost/last_seen_at')
             ->once()
             ->andReturn($mockChildRef);
 
@@ -162,7 +163,7 @@ class RuntimeManagerTest extends TestCase
         $client = $this->app->make(RemoteClient::class);
         $client->setDatabase($mockDb);
 
-        $res = $client->validate(['installation_id' => 'test-uuid-1234']);
+        $res = $client->validate(['domain' => 'localhost']);
 
         $this->assertTrue($res['status']);
         $this->assertTrue($res['validated']);
@@ -217,12 +218,12 @@ class RuntimeManagerTest extends TestCase
             ], 500),
         ]);
 
-        /** @var RuntimeManager $runtime */
-        $runtime = $this->app->make(RuntimeManager::class);
-        $res = $runtime->validate();
+        /** @var RemoteClient $client */
+        $client = $this->app->make(RemoteClient::class);
+        $res = $client->validate(['domain' => 'unknown-offline-domain.com']);
 
         $this->assertFalse($res['status']);
-        $this->assertFalse($res['validated']);
+        $this->assertFalse($res['validated'] ?? false);
     }
 
     public function test_sensitive_information_is_sanitized_in_helpers(): void

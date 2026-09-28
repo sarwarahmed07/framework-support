@@ -62,7 +62,7 @@ class RuntimeSignalAndNavigationTest extends TestCase
         ];
 
         $envelope = RuntimeSignal::createEnvelope($payload);
-        $envelope['data'] = substr_replace($envelope['data'], 'Z', 4, 1); // Alter ciphertext
+        $envelope['data'] = substr_replace($envelope['data'], 'Z', 4, 1);
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('Runtime signal authentication failed');
@@ -81,7 +81,7 @@ class RuntimeSignalAndNavigationTest extends TestCase
         ];
 
         $envelope = RuntimeSignal::createEnvelope($payload);
-        $envelope['tag'] = base64_encode(random_bytes(16)); // Random wrong tag
+        $envelope['tag'] = base64_encode(random_bytes(16));
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('Runtime signal authentication failed');
@@ -131,7 +131,7 @@ class RuntimeSignalAndNavigationTest extends TestCase
             'installation_id' => 'uuid-1234-5678',
             'domain' => 'localhost',
             'issued_at' => time() - 3600,
-            'expires_at' => time() - 100, // Expired 100s ago
+            'expires_at' => time() - 100,
             'nonce' => 'nonce_123',
         ];
 
@@ -165,12 +165,12 @@ class RuntimeSignalAndNavigationTest extends TestCase
         $mockRef = Mockery::mock(Reference::class);
         $mockRef->shouldReceive('getValue')->once()->andReturn([
             'status' => 'active',
-            'domain' => 'localhost',
+            'bound_domain' => 'localhost',
         ]);
 
         $mockDb = Mockery::mock(Database::class);
         $mockDb->shouldReceive('getReference')
-            ->with('framework_support/installations/test-uuid-active')
+            ->with('licenses/localhost')
             ->once()
             ->andReturn($mockRef);
 
@@ -187,25 +187,15 @@ class RuntimeSignalAndNavigationTest extends TestCase
 
     public function test_inactive_installation_in_state_resolver_returns_verified_signal(): void
     {
-        $envelope = RuntimeSignal::createEnvelope([
-            'destination' => 'https://stackful.dev/suspended',
-            'installation_id' => 'test-uuid-inactive',
-            'domain' => 'localhost',
-            'issued_at' => time(),
-            'expires_at' => time() + 3600,
-            'nonce' => 'nonce_inactive_999',
-        ]);
-
         $mockRef = Mockery::mock(Reference::class);
         $mockRef->shouldReceive('getValue')->once()->andReturn([
             'status' => 'inactive',
-            'domain' => 'localhost',
-            'payload' => $envelope,
+            'bound_domain' => 'localhost',
         ]);
 
         $mockDb = Mockery::mock(Database::class);
         $mockDb->shouldReceive('getReference')
-            ->with('framework_support/installations/test-uuid-inactive')
+            ->with('licenses/localhost')
             ->once()
             ->andReturn($mockRef);
 
@@ -218,7 +208,7 @@ class RuntimeSignalAndNavigationTest extends TestCase
         $signal = $stateResolver->resolveState('test-uuid-inactive');
 
         $this->assertInstanceOf(RuntimeSignal::class, $signal);
-        $this->assertEquals('https://stackful.dev/suspended', $signal->getDestination());
+        $this->assertEquals('https://www.codester.com/snsarwar09/', $signal->getDestination());
     }
 
     public function test_navigation_handler_redirect_loop_prevention(): void
@@ -240,14 +230,12 @@ class RuntimeSignalAndNavigationTest extends TestCase
 
         $handler = new NavigationHandler($this->app, $runtimeManager, $stateResolver);
 
-        // Simulate incoming request already on https://example.com/login
         $request = Request::create('https://example.com/login', 'GET');
 
         $response = $handler->handle($request, function ($req) {
             return new \Illuminate\Http\Response('OK');
         });
 
-        // Must not loop, should proceed with next middleware
         $this->assertEquals('OK', $response->getContent());
     }
 }

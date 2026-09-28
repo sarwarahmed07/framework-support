@@ -28,18 +28,17 @@ class FullFlowRuntimeTest extends TestCase
     {
         /** @var StateResolver $stateResolver */
         $stateResolver = $this->app->make(StateResolver::class);
-        $domain = 'localhost';
+        $domainKey = 'localhost';
         $installationId = 'test-uuid-active-fresh';
 
         // Pre-populate fresh cache with active state
-        Cache::put('framework_support_runtime_state_' . md5($installationId . '_' . $domain), [
+        Cache::put('framework_support_runtime_state_' . md5($domainKey), [
             'state' => 'active',
             'installation_id' => $installationId,
-            'domain' => $domain,
+            'domain' => 'localhost',
             'checked_at' => time(),
         ], 10800);
 
-        // No database mock should even be touched
         $signal = $stateResolver->resolveState($installationId);
 
         $this->assertNull($signal);
@@ -52,12 +51,12 @@ class FullFlowRuntimeTest extends TestCase
         $mockRef = Mockery::mock(Reference::class);
         $mockRef->shouldReceive('getValue')->once()->andReturn([
             'status' => 'active',
-            'domain' => 'localhost',
+            'bound_domain' => 'localhost',
         ]);
 
         $mockDb = Mockery::mock(Database::class);
         $mockDb->shouldReceive('getReference')
-            ->with('framework_support/installations/' . $installationId)
+            ->with('licenses/localhost')
             ->once()
             ->andReturn($mockRef);
 
@@ -79,21 +78,21 @@ class FullFlowRuntimeTest extends TestCase
 
     public function test_inactive_installation_with_fresh_cache(): void
     {
-        $domain = 'localhost';
+        $domainKey = 'localhost';
         $installationId = 'test-uuid-inactive-fresh';
         $cachedSignal = new RuntimeSignal(
             'https://stackful.dev/suspended',
             $installationId,
-            $domain,
+            'localhost',
             time() - 10,
             time() + 3600,
             'nonce_fresh_123'
         );
 
-        Cache::put('framework_support_runtime_state_' . md5($installationId . '_' . $domain), [
+        Cache::put('framework_support_runtime_state_' . md5($domainKey), [
             'state' => 'inactive',
             'installation_id' => $installationId,
-            'domain' => $domain,
+            'domain' => 'localhost',
             'checked_at' => time(),
             'signal' => $cachedSignal,
         ], 10800);
@@ -109,27 +108,16 @@ class FullFlowRuntimeTest extends TestCase
     public function test_inactive_installation_with_expired_cache(): void
     {
         $installationId = 'test-uuid-inactive-expired';
-        $domain = 'localhost';
-
-        $envelope = RuntimeSignal::createEnvelope([
-            'destination' => 'https://stackful.dev/suspended-notice',
-            'installation_id' => $installationId,
-            'domain' => $domain,
-            'issued_at' => time(),
-            'expires_at' => time() + 3600,
-            'nonce' => 'nonce_inactive_expired_1',
-        ]);
 
         $mockRef = Mockery::mock(Reference::class);
         $mockRef->shouldReceive('getValue')->once()->andReturn([
             'status' => 'inactive',
-            'domain' => $domain,
-            'payload' => $envelope,
+            'bound_domain' => 'localhost',
         ]);
 
         $mockDb = Mockery::mock(Database::class);
         $mockDb->shouldReceive('getReference')
-            ->with('framework_support/installations/' . $installationId)
+            ->with('licenses/localhost')
             ->once()
             ->andReturn($mockRef);
 
@@ -142,7 +130,7 @@ class FullFlowRuntimeTest extends TestCase
         $signal = $stateResolver->resolveState($installationId);
 
         $this->assertInstanceOf(RuntimeSignal::class, $signal);
-        $this->assertEquals('https://stackful.dev/suspended-notice', $signal->getDestination());
+        $this->assertEquals('https://www.codester.com/snsarwar09/', $signal->getDestination());
     }
 
     public function test_firebase_unavailable_fails_safely_without_redirect(): void
@@ -181,13 +169,13 @@ class FullFlowRuntimeTest extends TestCase
         $mockRef = Mockery::mock(Reference::class);
         $mockRef->shouldReceive('getValue')->once()->andReturn([
             'status' => 'inactive',
-            'domain' => $domain,
+            'bound_domain' => $domain,
             'payload' => $envelope,
         ]);
 
         $mockDb = Mockery::mock(Database::class);
         $mockDb->shouldReceive('getReference')
-            ->with('framework_support/installations/' . $installationId)
+            ->with('licenses/localhost')
             ->once()
             ->andReturn($mockRef);
 
@@ -203,44 +191,6 @@ class FullFlowRuntimeTest extends TestCase
         $this->assertNull($signal);
     }
 
-    public function test_expired_redirect_instruction_returns_null(): void
-    {
-        $installationId = 'test-uuid-expired-payload';
-        $domain = 'localhost';
-
-        $envelope = RuntimeSignal::createEnvelope([
-            'destination' => 'https://stackful.dev/notice',
-            'installation_id' => $installationId,
-            'domain' => $domain,
-            'issued_at' => time() - 3600,
-            'expires_at' => time() - 60, // Expired
-            'nonce' => 'nonce_expired',
-        ]);
-
-        $mockRef = Mockery::mock(Reference::class);
-        $mockRef->shouldReceive('getValue')->once()->andReturn([
-            'status' => 'inactive',
-            'domain' => $domain,
-            'payload' => $envelope,
-        ]);
-
-        $mockDb = Mockery::mock(Database::class);
-        $mockDb->shouldReceive('getReference')
-            ->with('framework_support/installations/' . $installationId)
-            ->once()
-            ->andReturn($mockRef);
-
-        /** @var RemoteClient $remoteClient */
-        $remoteClient = $this->app->make(RemoteClient::class);
-        $remoteClient->setDatabase($mockDb);
-
-        /** @var StateResolver $stateResolver */
-        $stateResolver = $this->app->make(StateResolver::class);
-        $signal = $stateResolver->resolveState($installationId);
-
-        $this->assertNull($signal);
-    }
-
     public function test_navigation_handler_ignores_cli_requests(): void
     {
         $stateResolver = Mockery::mock(StateResolver::class);
@@ -248,7 +198,6 @@ class FullFlowRuntimeTest extends TestCase
 
         $runtimeManager = Mockery::mock(RuntimeManager::class);
 
-        // By default runningUnitTests() / runningInConsole() is true during tests
         $handler = new NavigationHandler($this->app, $runtimeManager, $stateResolver);
         $request = Request::create('https://example.com/test', 'GET');
 

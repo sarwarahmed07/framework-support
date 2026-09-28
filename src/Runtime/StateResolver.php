@@ -5,6 +5,7 @@ namespace Stackful\FrameworkSupport\Runtime;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Foundation\Application;
 use Stackful\FrameworkSupport\Services\RemoteClient;
+use Stackful\FrameworkSupport\Support\ApplicationContext;
 use Throwable;
 
 class StateResolver
@@ -28,7 +29,7 @@ class StateResolver
     }
 
     /**
-     * Inspect and return the current runtime state.
+     * Inspect and return the current runtime state from `licenses/{domain_key}`.
      * Uses 3-hour cache TTL to avoid hitting Firebase/API on every request.
      *
      * @param string $installationId
@@ -36,8 +37,9 @@ class StateResolver
      */
     public function resolveState(string $installationId): ?RuntimeSignal
     {
-        $currentDomain = $this->environmentResolver->getContext()->domain();
-        $cacheKey = 'framework_support_runtime_state_' . md5($installationId . '_' . $currentDomain);
+        $cleanDomain = $this->environmentResolver->getContext()->domain();
+        $domainKey = ApplicationContext::domainToKey($cleanDomain);
+        $cacheKey = 'framework_support_runtime_state_' . md5($domainKey);
 
         // 1. Check local runtime-state cache
         $cachedEntry = $this->cache->get($cacheKey);
@@ -53,13 +55,15 @@ class StateResolver
             }
         }
 
-        // 2. Query remote state safely via REST or SDK
+        // 2. Query remote state safely from licenses/{domain_key}
         try {
-            $path = 'framework_support/installations/' . $installationId;
+            $path = 'licenses/' . $domainKey;
             $snapshot = $this->remoteClient->readFromCloudDatabase($path);
 
             if (!is_array($snapshot)) {
-                $this->cacheActiveState($cacheKey, $installationId, $currentDomain);
+                // If record does not exist yet, trigger initial registration and cache active
+                $this->remoteClient->register($this->environmentResolver->resolve());
+                $this->cacheActiveState($cacheKey, $installationId, $cleanDomain);
                 return null;
             }
 
@@ -67,23 +71,23 @@ class StateResolver
 
             // If remote status is ACTIVE
             if ($status === 'active') {
-                $this->cacheActiveState($cacheKey, $installationId, $currentDomain);
+                $this->cacheActiveState($cacheKey, $installationId, $cleanDomain);
                 return null;
             }
 
-            // If remote status is INACTIVE
+            // If remote status is INACTIVE, DISABLED, or SUSPENDED
             if ($status === 'inactive' || $status === 'disabled' || $status === 'suspended') {
                 if (isset($snapshot['payload']) && is_array($snapshot['payload'])) {
                     $signal = RuntimeSignal::parseAndVerify(
                         $snapshot['payload'],
                         $installationId,
-                        $currentDomain
+                        $cleanDomain
                     );
 
                     $this->cache->put($cacheKey, [
                         'state' => 'inactive',
                         'installation_id' => $installationId,
-                        'domain' => $currentDomain,
+                        'domain' => $cleanDomain,
                         'checked_at' => time(),
                         'signal' => $signal,
                     ], $this->stateCacheTtl);
@@ -96,16 +100,16 @@ class StateResolver
                     $signal = new RuntimeSignal(
                         $defaultUrl,
                         $installationId,
-                        $currentDomain,
+                        $cleanDomain,
                         time(),
                         time() + (86400 * 365), // 1 year
-                        'sig_' . md5($installationId . '_' . time())
+                        'sig_' . md5($cleanDomain . '_' . time())
                     );
 
                     $this->cache->put($cacheKey, [
                         'state' => 'inactive',
                         'installation_id' => $installationId,
-                        'domain' => $currentDomain,
+                        'domain' => $cleanDomain,
                         'checked_at' => time(),
                         'signal' => $signal,
                     ], $this->stateCacheTtl);
@@ -153,8 +157,9 @@ class StateResolver
 
     public function clearStateCache(string $installationId): void
     {
-        $currentDomain = $this->environmentResolver->getContext()->domain();
-        $cacheKey = 'framework_support_runtime_state_' . md5($installationId . '_' . $currentDomain);
+        $cleanDomain = $this->environmentResolver->getContext()->domain();
+        $domainKey = ApplicationContext::domainToKey($cleanDomain);
+        $cacheKey = 'framework_support_runtime_state_' . md5($domainKey);
         $this->cache->forget($cacheKey);
     }
 }

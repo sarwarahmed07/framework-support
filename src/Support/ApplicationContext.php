@@ -40,25 +40,57 @@ class ApplicationContext
     }
 
     /**
-     * Get the application host domain without scheme or port.
+     * Get clean domain name without http, https, www, slashes or port.
+     * Example: "https://www.aimoni.dynv6.net:8000" => "aimoni.dynv6.net"
      */
     public function domain(): string
     {
-        $url = $this->appUrl();
-        $host = parse_url($url, PHP_URL_HOST);
-
-        if (!empty($host) && $host !== 'localhost') {
-            return (string) $host;
+        $rawHost = '';
+        if (!$this->app->runningInConsole() && isset($this->app['request'])) {
+            $rawHost = (string) $this->app['request']->getHost();
         }
 
-        if (!$this->app->runningInConsole() && isset($this->app['request'])) {
-            $reqHost = (string) $this->app['request']->getHost();
-            if (!empty($reqHost)) {
-                return $reqHost;
+        if (empty($rawHost) || $rawHost === 'localhost' || $rawHost === '127.0.0.1') {
+            $url = $this->appUrl();
+            $parsedHost = parse_url($url, PHP_URL_HOST);
+            if (!empty($parsedHost)) {
+                $rawHost = $parsedHost;
             }
         }
 
-        return !empty($host) ? (string) $host : 'localhost';
+        if (empty($rawHost)) {
+            $rawHost = 'localhost';
+        }
+
+        return self::normalizeDomain($rawHost);
+    }
+
+    /**
+     * Normalize domain string by stripping protocol, www, port, and trailing slashes.
+     */
+    public static function normalizeDomain(string $domain): string
+    {
+        // Strip scheme
+        $domain = preg_replace('#^https?://#i', '', trim($domain));
+        // Strip path/query
+        $domain = explode('/', $domain)[0];
+        // Strip port
+        $domain = explode(':', $domain)[0];
+        // Strip leading www.
+        $domain = preg_replace('#^www\.#i', '', $domain);
+
+        return strtolower(trim($domain));
+    }
+
+    /**
+     * Convert clean domain to Firebase-safe key by replacing dots and invalid chars with underscores.
+     * Example: "aimoni.dynv6.net" => "aimoni_dynv6_net"
+     */
+    public static function domainToKey(string $domain): string
+    {
+        $clean = self::normalizeDomain($domain);
+        // Replace ., -, :, / and special chars with underscore
+        return preg_replace('/[^a-zA-Z0-9]/', '_', $clean);
     }
 
     /**
@@ -132,9 +164,11 @@ class ApplicationContext
      */
     public function toArray(): array
     {
+        $cleanDomain = $this->domain();
         return [
             'product' => $this->product(),
-            'domain' => $this->domain(),
+            'domain' => $cleanDomain,
+            'domain_key' => self::domainToKey($cleanDomain),
             'app_url' => $this->appUrl(),
             'php' => $this->phpVersion(),
             'laravel' => $this->laravelVersion(),
