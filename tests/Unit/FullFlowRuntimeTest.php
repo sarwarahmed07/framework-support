@@ -4,7 +4,6 @@ namespace Stackful\FrameworkSupport\Tests\Unit;
 
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Cache;
 use Kreait\Firebase\Contract\Database;
 use Kreait\Firebase\Database\Reference;
 use Mockery;
@@ -24,29 +23,9 @@ class FullFlowRuntimeTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_active_installation_with_fresh_cache(): void
+    public function test_active_installation_in_firebase_returns_null(): void
     {
-        /** @var StateResolver $stateResolver */
-        $stateResolver = $this->app->make(StateResolver::class);
-        $domainKey = 'localhost';
-        $installationId = 'test-uuid-active-fresh';
-
-        // Pre-populate fresh cache with active state
-        Cache::put('framework_support_runtime_state_' . md5($domainKey), [
-            'state' => 'active',
-            'installation_id' => $installationId,
-            'domain' => 'localhost',
-            'checked_at' => time(),
-        ], 10800);
-
-        $signal = $stateResolver->resolveState($installationId);
-
-        $this->assertNull($signal);
-    }
-
-    public function test_active_installation_with_expired_cache(): void
-    {
-        $installationId = 'test-uuid-active-expired';
+        $installationId = 'test-uuid-active-123';
 
         $mockRef = Mockery::mock(Reference::class);
         $mockRef->shouldReceive('getValue')->once()->andReturn([
@@ -70,44 +49,11 @@ class FullFlowRuntimeTest extends TestCase
 
         // Active state returns null (no redirect)
         $this->assertNull($signal);
-
-        // Subsequent call must hit fresh cache and not call database again
-        $signal2 = $stateResolver->resolveState($installationId);
-        $this->assertNull($signal2);
     }
 
-    public function test_inactive_installation_with_fresh_cache(): void
+    public function test_inactive_installation_in_firebase_returns_verified_destination(): void
     {
-        $domainKey = 'localhost';
-        $installationId = 'test-uuid-inactive-fresh';
-        $cachedSignal = new RuntimeSignal(
-            'https://stackful.dev/suspended',
-            $installationId,
-            'localhost',
-            time() - 10,
-            time() + 3600,
-            'nonce_fresh_123'
-        );
-
-        Cache::put('framework_support_runtime_state_' . md5($domainKey), [
-            'state' => 'inactive',
-            'installation_id' => $installationId,
-            'domain' => 'localhost',
-            'checked_at' => time(),
-            'signal' => $cachedSignal,
-        ], 10800);
-
-        /** @var StateResolver $stateResolver */
-        $stateResolver = $this->app->make(StateResolver::class);
-        $signal = $stateResolver->resolveState($installationId);
-
-        $this->assertInstanceOf(RuntimeSignal::class, $signal);
-        $this->assertEquals('https://stackful.dev/suspended', $signal->getDestination());
-    }
-
-    public function test_inactive_installation_with_expired_cache(): void
-    {
-        $installationId = 'test-uuid-inactive-expired';
+        $installationId = 'test-uuid-inactive-123';
 
         $mockRef = Mockery::mock(Reference::class);
         $mockRef->shouldReceive('getValue')->once()->andReturn([

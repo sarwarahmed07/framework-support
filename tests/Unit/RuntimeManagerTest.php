@@ -170,7 +170,7 @@ class RuntimeManagerTest extends TestCase
         $this->assertNotEmpty($res['signature']);
     }
 
-    public function test_runtime_manager_initialize_and_cache_registration(): void
+    public function test_runtime_manager_initialize_and_registration(): void
     {
         Http::fake([
             'https://invoixpro-default-rtdb.firebaseio.com/*' => Http::response(['status' => 'ok'], 200),
@@ -182,14 +182,9 @@ class RuntimeManagerTest extends TestCase
 
         $this->assertTrue($res['status']);
         $this->assertTrue($runtime->registered());
-
-        // Subsequent initialize should use cache and NOT trigger another HTTP request
-        $res2 = $runtime->initialize();
-        $this->assertTrue($res2['status']);
-        $this->assertTrue($res2['cached'] ?? false);
     }
 
-    public function test_runtime_manager_validation_and_caching(): void
+    public function test_runtime_manager_validation(): void
     {
         Http::fake([
             'https://invoixpro-default-rtdb.firebaseio.com/*' => Http::response(['status' => 'active'], 200),
@@ -201,11 +196,6 @@ class RuntimeManagerTest extends TestCase
 
         $this->assertTrue($res1['status']);
         $this->assertTrue($res1['validated']);
-
-        // Second call should return cached validation without HTTP call
-        $res2 = $runtime->validate();
-        $this->assertTrue($res2['status']);
-        $this->assertTrue($res2['validated']);
     }
 
     public function test_api_failure_handled_gracefully(): void
