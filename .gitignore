@@ -13,3 +13,7 @@ Thumbs.db
 *.sublime-workspace
 /storage/
 composer.lock
+test_manual*.php
+scratch/
+tests/manual/
+

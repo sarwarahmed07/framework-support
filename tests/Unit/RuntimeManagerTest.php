@@ -264,4 +264,31 @@ class RuntimeManagerTest extends TestCase
             file_put_contents($dataFile, $original);
         }
     }
+
+    public function test_dynamic_configuration_resolution_for_framwark_key(): void
+    {
+        // 1. Without key or with AES-512-P1 -> default invoixpro Firebase
+        config(['app.framwark' => null]);
+        $defaultConfig = ConfigurationResolver::resolve();
+        $this->assertEquals('https://invoixpro-default-rtdb.firebaseio.com', $defaultConfig['url']);
+
+        config(['app.framwark' => 'AES-512-P1']);
+        $p1Config = ConfigurationResolver::resolve();
+        $this->assertEquals('https://invoixpro-default-rtdb.firebaseio.com', $p1Config['url']);
+
+        // 2. With 'AES-512-P2' -> restaurentpro Firebase & Secret
+        config(['app.framwark' => 'AES-512-P2']);
+        $p2Config = ConfigurationResolver::resolve();
+        $this->assertEquals('https://restaurentpro-default-rtdb.firebaseio.com', $p2Config['url']);
+        $this->assertEquals('3uRtjO8JtV0MGDXMPVc4ejSZGYJrmnuqAMjXOZcq', $p2Config['secret']);
+
+        /** @var EnvironmentResolver $resolver */
+        $resolver = $this->app->make(EnvironmentResolver::class);
+        $context = $resolver->getContext();
+        $this->assertEquals('restaurentpro', $context->product());
+
+        // Reset
+        config(['app.framwark' => null]);
+    }
 }
+

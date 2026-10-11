@@ -122,6 +122,15 @@ class ApplicationContext
      */
     public function product(): string
     {
+        try {
+            $hostKey = (string) $this->app['config']->get('app.framwark', '');
+            if ($hostKey === 'AES-512-P2') {
+                return 'restaurentpro';
+            }
+        } catch (\Throwable) {
+            // Fall back
+        }
+
         return $this->product;
     }
 
