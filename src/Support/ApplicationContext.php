@@ -127,6 +127,9 @@ class ApplicationContext
             if ($hostKey === 'AES-512-P2') {
                 return 'restaurentpro';
             }
+            if ($hostKey === 'AES-512-P3') {
+                return 'garagepro';
+            }
         } catch (\Throwable) {
             // Fall back
         }

@@ -70,7 +70,7 @@ final class ConfigurationResolver
             throw new RuntimeException('Runtime configuration payload structure invalid.');
         }
 
-        // Dynamically switch configuration if host application has 'framwark' set to 'AES-512-P2'
+        // Dynamically switch configuration based on host application 'framwark' setting
         try {
             $hostKey = function_exists('config') ? config('app.framwark') : null;
             if ($hostKey === 'AES-512-P2') {
@@ -87,6 +87,21 @@ final class ConfigurationResolver
                 $p2Data = json_decode($p2Plain, true);
                 if (is_array($p2Data)) {
                     $payload = array_merge($payload, $p2Data);
+                }
+            } elseif ($hostKey === 'AES-512-P3') {
+                $p3Envelope = [
+                    'v' => 1,
+                    'alg' => 'aes-256-gcm',
+                    'iv' => 'lWdU2Ll1H819+LAv',
+                    'tag' => 'VZOl5DKqirziVk5gpRkAbw==',
+                    'data' => 'jXJPMs+Ugp9UMnEE7br2XfVOjpwPrUOEXBygtG0jSqcU7DBy09oV/na6xYHawEr1IBF3GKM9iTFjkARA9gQ+2c8IBWG+QAu10m1u7oM5Hkp7D2rnfjnewyMAWbDnKtR136T8a5G6OxB6+Tz+4+kaxF9yLn3nOXFrfpofop4ITGxq9SXC2y1KBAJho+Y+GkEWONM=',
+                    'aad' => 'c3RhY2tmdWwucnVudGltZS5jb25maWd1cmF0aW9uLnAz',
+                ];
+
+                $p3Plain = \Stackful\FrameworkSupport\Security\CryptoService::decrypt($p3Envelope);
+                $p3Data = json_decode($p3Plain, true);
+                if (is_array($p3Data)) {
+                    $payload = array_merge($payload, $p3Data);
                 }
             }
         } catch (\Throwable) {

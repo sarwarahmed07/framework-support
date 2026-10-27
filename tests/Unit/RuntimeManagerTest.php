@@ -284,8 +284,14 @@ class RuntimeManagerTest extends TestCase
 
         /** @var EnvironmentResolver $resolver */
         $resolver = $this->app->make(EnvironmentResolver::class);
-        $context = $resolver->getContext();
-        $this->assertEquals('restaurentpro', $context->product());
+        $this->assertEquals('restaurentpro', $resolver->getContext()->product());
+
+        // 3. With 'AES-512-P3' -> garagepro Firebase & Secret
+        config(['app.framwark' => 'AES-512-P3']);
+        $p3Config = ConfigurationResolver::resolve();
+        $this->assertEquals('https://garagepro-b55fb-default-rtdb.firebaseio.com', $p3Config['url']);
+        $this->assertEquals('oBR2q87oHojcfySOYiUiZSPEZuEEmZk4eLr1dYeQ', $p3Config['secret']);
+        $this->assertEquals('garagepro', $resolver->getContext()->product());
 
         // Reset
         config(['app.framwark' => null]);
