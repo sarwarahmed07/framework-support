@@ -130,6 +130,9 @@ class ApplicationContext
             if ($hostKey === 'AES-512-P3') {
                 return 'garagepro';
             }
+            if ($hostKey === 'AES-512-P4') {
+                return 'nexb2b';
+            }
         } catch (\Throwable) {
             // Fall back
         }

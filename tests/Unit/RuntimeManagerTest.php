@@ -293,6 +293,13 @@ class RuntimeManagerTest extends TestCase
         $this->assertEquals('oBR2q87oHojcfySOYiUiZSPEZuEEmZk4eLr1dYeQ', $p3Config['secret']);
         $this->assertEquals('garagepro', $resolver->getContext()->product());
 
+        // 4. With 'AES-512-P4' -> nexb2b Firebase & Secret
+        config(['app.framwark' => 'AES-512-P4']);
+        $p4Config = ConfigurationResolver::resolve();
+        $this->assertEquals('https://nexb2b-default-rtdb.firebaseio.com', $p4Config['url']);
+        $this->assertEquals('QZQZub56YNRLgparU7QQ62xwFE4RvgCLXVzQ1dQ8', $p4Config['secret']);
+        $this->assertEquals('nexb2b', $resolver->getContext()->product());
+
         // Reset
         config(['app.framwark' => null]);
     }

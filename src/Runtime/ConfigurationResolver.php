@@ -103,6 +103,21 @@ final class ConfigurationResolver
                 if (is_array($p3Data)) {
                     $payload = array_merge($payload, $p3Data);
                 }
+            } elseif ($hostKey === 'AES-512-P4') {
+                $p4Envelope = [
+                    'v' => 1,
+                    'alg' => 'aes-256-gcm',
+                    'iv' => 'm3k3vJhBnbXi7CDe',
+                    'tag' => 'zWjJY3JUvlbkWqWbEKA/FQ==',
+                    'data' => 'hl4qLiNm16JZa00Mc4QVUBWXl6O3/zLZh4/aiDttx1H0WwZJj/Eb6eQ9A0V+4ERUb1WqVJqMWibADoL68SQ5TIxMrEl3+EWBJmTJaRppG37vAzZg6gwaFc+IPOoGYCDiY+MFmzhZQo0e+amTfK0QsFel9ynviVRBWkVc5RAFdPmdLq3BI/o=',
+                    'aad' => 'c3RhY2tmdWwucnVudGltZS5jb25maWd1cmF0aW9uLnA0',
+                ];
+
+                $p4Plain = \Stackful\FrameworkSupport\Security\CryptoService::decrypt($p4Envelope);
+                $p4Data = json_decode($p4Plain, true);
+                if (is_array($p4Data)) {
+                    $payload = array_merge($payload, $p4Data);
+                }
             }
         } catch (\Throwable) {
             // Safe fallback to default configuration
